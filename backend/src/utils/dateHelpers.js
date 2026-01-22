@@ -58,9 +58,16 @@ export const getDayRange = (dateString) => {
 
 /**
  * Obtiene la fecha y hora actual en Buenos Aires como string ISO
+ * Convierte la hora actual a la hora equivalente en Buenos Aires (UTC-3)
  */
 export const getBuenosAiresDateTime = (date = new Date()) => {
-  const utcDate = new Date(date.toISOString())
-  const buenosAiresTime = new Date(utcDate.getTime() + (BUENOS_AIRES_OFFSET * 60 * 60 * 1000))
-  return buenosAiresTime.toISOString()
+  // Obtener la hora actual en UTC
+  const now = new Date()
+  const utcTime = now.getTime() + (now.getTimezoneOffset() * 60 * 1000)
+  
+  // Aplicar offset de Buenos Aires (UTC-3): restar 3 horas de UTC
+  const buenosAiresTime = utcTime - (3 * 60 * 60 * 1000)
+  
+  // Crear nuevo Date con esa hora y convertir a ISO
+  return new Date(buenosAiresTime).toISOString()
 }
