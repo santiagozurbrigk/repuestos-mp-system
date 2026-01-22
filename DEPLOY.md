@@ -52,9 +52,11 @@ git push origin main
 4. Configura el servicio:
    - **Name**: sistema-interno-mp-backend
    - **Environment**: Node
-   - **Build Command**: `cd backend && npm install`
-   - **Start Command**: `cd backend && npm start`
    - **Root Directory**: `backend`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   
+   **⚠️ IMPORTANTE**: Si configuras `Root Directory` como `backend`, NO incluyas `cd backend` en los comandos. Render ya ejecutará los comandos dentro de ese directorio.
 
 ### 3. Configurar variables de entorno en Render
 
@@ -145,9 +147,25 @@ Una vez que tengas la URL de Vercel, actualiza la variable `CORS_ORIGIN` en Rend
 
 ### Errores de autenticación
 
-- Verifica que las credenciales de Supabase sean correctas
-- Asegúrate de que el esquema de base de datos se haya ejecutado correctamente
-- Revisa los logs de Supabase para ver errores específicos
+**Error: "Invalid login credentials"**
+
+Este error significa que las credenciales no son válidas. Verifica:
+
+1. **Usuario existe en Supabase:**
+   - Ve a Supabase Dashboard > Authentication > Users
+   - Si no hay usuarios, crea uno con "Add User" > "Create new user"
+   - Asegúrate de activar "Auto Confirm User" para que pueda iniciar sesión inmediatamente
+
+2. **Variables de entorno en Vercel:**
+   - Verifica que `VITE_SUPABASE_URL` sea tu Project URL completa
+   - Verifica que `VITE_SUPABASE_ANON_KEY` sea tu "Publishable key" (NO el Service Role Key)
+   - Haz un nuevo deploy después de cambiar variables
+
+3. **Credenciales correctas:**
+   - Usa el email y password exactos del usuario creado en Supabase
+   - Verifica que no haya espacios o caracteres especiales incorrectos
+
+**Nota:** El "Publishable key" (anon key) es diferente del "Service Role Key". El frontend usa el Publishable key.
 
 ## 📝 Notas Adicionales
 

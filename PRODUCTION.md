@@ -30,9 +30,11 @@ El proyecto ha sido preparado para producción con las siguientes optimizaciones
    SUPABASE_SERVICE_KEY=tu_supabase_service_key
    CORS_ORIGIN=https://tu-frontend.vercel.app
    ```
-5. Build Command: `cd backend && npm install`
-6. Start Command: `cd backend && npm start`
-7. Root Directory: `backend`
+5. Root Directory: `backend`
+6. Build Command: `npm install`
+7. Start Command: `npm start`
+   
+   **⚠️ IMPORTANTE**: Si configuras `Root Directory` como `backend`, NO incluyas `cd backend` en los comandos. Render ya ejecutará los comandos dentro de ese directorio.
 
 #### 2. Frontend (Vercel)
 

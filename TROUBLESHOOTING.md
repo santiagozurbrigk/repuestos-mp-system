@@ -2,6 +2,59 @@
 
 ## 🔴 Errores Comunes y Soluciones
 
+### Error: "Invalid login credentials" en producción
+
+**Síntomas:**
+- El login falla con el mensaje "Invalid login credentials" o "Credenciales inválidas"
+- El error aparece en la consola del navegador como `AuthApiError: Invalid login credentials`
+
+**Causas posibles:**
+
+1. **Usuario no existe en Supabase:**
+   - El usuario que intentas usar no ha sido creado en Supabase
+   - Solución: Crea el usuario en Supabase Dashboard > Authentication > Users > Add User
+
+2. **Variables de entorno incorrectas en Vercel:**
+   - `VITE_SUPABASE_URL` o `VITE_SUPABASE_ANON_KEY` están incorrectas o faltantes
+   - Solución: 
+     - Ve a Vercel Dashboard > Tu Proyecto > Settings > Environment Variables
+     - Verifica que `VITE_SUPABASE_URL` sea tu Project URL completa (ej: `https://xxxxx.supabase.co`)
+     - Verifica que `VITE_SUPABASE_ANON_KEY` sea tu "Publishable key" (no el Service Role Key)
+     - Haz un nuevo deploy después de cambiar las variables
+
+3. **Credenciales incorrectas:**
+   - El email o password que estás usando son incorrectos
+   - Solución: Verifica las credenciales en Supabase Dashboard > Authentication > Users
+
+**Pasos para crear un usuario en Supabase:**
+
+1. Ve a [Supabase Dashboard](https://app.supabase.com)
+2. Selecciona tu proyecto
+3. Ve a **Authentication** > **Users**
+4. Click en **Add User** > **Create new user**
+5. Ingresa:
+   - **Email**: El email que quieres usar para login
+   - **Password**: Una contraseña segura
+   - **Auto Confirm User**: Activa esta opción para que el usuario pueda iniciar sesión inmediatamente
+6. Click en **Create User**
+7. Ahora puedes usar estas credenciales para iniciar sesión en tu aplicación
+
+**Verificar variables de entorno en Vercel:**
+
+1. Ve a Vercel Dashboard > Tu Proyecto
+2. Settings > Environment Variables
+3. Verifica que existan:
+   - `VITE_SUPABASE_URL` = `https://tu-proyecto.supabase.co`
+   - `VITE_SUPABASE_ANON_KEY` = Tu "Publishable key" (no Service Role Key)
+   - `VITE_API_URL` = `https://tu-backend.onrender.com`
+4. Si cambiaste alguna variable, haz un nuevo deploy
+
+**Nota importante:** 
+- El "Publishable key" (anon key) es diferente del "Service Role Key"
+- El frontend usa el "Publishable key"
+- El backend usa el "Service Role Key"
+- NO compartas el Service Role Key en el frontend (es un riesgo de seguridad)
+
 ### Error: CORS Policy Blocking Requests
 
 **Síntomas:**

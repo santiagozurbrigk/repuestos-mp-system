@@ -2,6 +2,7 @@ services:
   - type: web
     name: sistema-interno-mp-backend
     env: node
+    rootDir: backend
     buildCommand: npm install
     startCommand: npm start
     envVars:
@@ -9,3 +10,9 @@ services:
         value: production
       - key: PORT
         value: 3001
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false

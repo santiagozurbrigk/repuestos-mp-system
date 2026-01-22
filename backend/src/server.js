@@ -83,6 +83,19 @@ app.options('*', cors(corsOptions), (req, res) => {
 
 app.use(express.json())
 
+// Ruta raíz
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Sistema Interno MP API',
+    status: 'ok',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api'
+    }
+  })
+})
+
 // Health check
 app.get('/health', (req, res) => {
   // Health check no necesita logging
