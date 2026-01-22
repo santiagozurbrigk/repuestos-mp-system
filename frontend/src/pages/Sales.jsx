@@ -142,7 +142,11 @@ export default function Sales() {
 
   const totalToday = sales
     .filter((sale) => {
-      const saleDateStr = getBuenosAiresDateString(new Date(sale.date))
+      // sale.date es un timestamp ISO (UTC) desde el backend
+      const saleDate = new Date(sale.date)
+      // Convertir a fecha de Buenos Aires: restar 3 horas para obtener la fecha local
+      const buenosAiresDate = new Date(saleDate.getTime() - (3 * 60 * 60 * 1000))
+      const saleDateStr = buenosAiresDate.toISOString().split('T')[0]
       const todayStr = getBuenosAiresDateString()
       return saleDateStr === todayStr
     })

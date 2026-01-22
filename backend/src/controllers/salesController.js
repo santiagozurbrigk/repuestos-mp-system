@@ -1,7 +1,7 @@
 import { supabase } from '../config/supabase.js'
 import '../config/env.js'
 import { logger } from '../utils/logger.js'
-import { getBuenosAiresDateTime } from '../utils/dateHelpers.js'
+import { getBuenosAiresDateTime, getBuenosAiresDateString } from '../utils/dateHelpers.js'
 
 export const createSale = async (req, res) => {
   try {
@@ -18,13 +18,35 @@ export const createSale = async (req, res) => {
       return res.status(400).json({ error: 'Método de pago inválido' })
     }
 
+    // Procesar fecha correctamente
+    let saleDate
+    if (date) {
+      // Si viene formato datetime-local (YYYY-MM-DDTHH:mm), interpretarlo como hora de Buenos Aires
+      if (date.includes('T')) {
+        const [datePart, timePart] = date.split('T')
+        const [year, month, day] = datePart.split('-').map(Number)
+        const [hours, minutes] = (timePart || '00:00').split(':').map(Number)
+        
+        // Crear fecha en UTC pero representando la hora local de Buenos Aires
+        // Buenos Aires UTC-3: sumar 3 horas para obtener UTC equivalente
+        const utcHours = hours + 3
+        saleDate = new Date(Date.UTC(year, month - 1, day, utcHours, minutes || 0, 0, 0))
+      } else {
+        // Si es solo fecha (YYYY-MM-DD), usar inicio del día en Buenos Aires
+        const [year, month, day] = date.split('-').map(Number)
+        saleDate = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0))
+      }
+    } else {
+      // Usar fecha y hora actual de Buenos Aires
+      saleDate = new Date(getBuenosAiresDateTime())
+    }
+
     const saleData = {
       user_id: userId,
       total_amount: parseFloat(total_amount),
       payment_method,
       observations: observations || null,
-      // Usar fecha de Buenos Aires si no se proporciona
-      date: date ? new Date(date) : new Date(getBuenosAiresDateTime()),
+      date: saleDate,
     }
 
     const { data, error } = await supabase
