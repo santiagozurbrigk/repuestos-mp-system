@@ -141,7 +141,19 @@ export const updateSale = async (req, res) => {
       updateData.payment_method = payment_method
     }
     if (observations !== undefined) updateData.observations = observations
-    if (date !== undefined) updateData.date = new Date(date)
+    if (date !== undefined) {
+      // Procesar fecha correctamente (misma lógica que createSale)
+      if (date.includes('T')) {
+        const [datePart, timePart] = date.split('T')
+        const [year, month, day] = datePart.split('-').map(Number)
+        const [hours, minutes] = (timePart || '00:00').split(':').map(Number)
+        const utcHours = hours + 3
+        updateData.date = new Date(Date.UTC(year, month - 1, day, utcHours, minutes || 0, 0, 0))
+      } else {
+        const [year, month, day] = date.split('-').map(Number)
+        updateData.date = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0))
+      }
+    }
 
     const { data, error } = await supabase
       .from('sales')
