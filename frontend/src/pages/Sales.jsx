@@ -61,7 +61,7 @@ export default function Sales() {
       const dates = response.data.map(c => c.closure_date)
       setClosedDates(dates)
     } catch (error) {
-      logger.error('Error al obtener fechas cerradas:', error)
+      // Error silencioso, no crítico
     }
   }
 
@@ -104,7 +104,6 @@ export default function Sales() {
       fetchClosedDates() // Actualizar fechas cerradas después de guardar
       success(editingSale ? 'Venta actualizada correctamente' : 'Venta creada correctamente')
     } catch (err) {
-      logger.error('Error al guardar venta:', err)
       error('Error al guardar la venta')
     }
   }

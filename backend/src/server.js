@@ -59,7 +59,13 @@ const corsOptions = {
       'http://127.0.0.1:5173',
     ]
     
-    if (allowedOrigins.includes(origin)) {
+    // Permitir cualquier origen de Vercel (vercel.app)
+    const isVercelOrigin = origin.includes('.vercel.app')
+    
+    // Permitir cualquier origen de localhost para desarrollo
+    const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
+    
+    if (allowedOrigins.includes(origin) || isVercelOrigin || isLocalhost) {
       callback(null, true)
     } else {
       logger.warn(`CORS bloqueado para origin: ${origin}`)

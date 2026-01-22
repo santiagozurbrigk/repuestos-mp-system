@@ -64,16 +64,13 @@ export default function CashClosure() {
 
     try {
       setClosing(true)
-      logger.info('Cerrando caja', { date: todayStr })
       await api.post('/cash-closure', {
         closure_date: todayStr,
       })
-      logger.success('Caja cerrada exitosamente')
       await fetchTodaySummary()
       await fetchClosures()
       success('Caja cerrada correctamente')
     } catch (err) {
-      logger.error('Error al cerrar caja:', err)
       const errorMessage = err.response?.data?.error || 'Error al cerrar la caja'
       error(errorMessage)
       
