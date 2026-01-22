@@ -53,10 +53,13 @@ export const getTodaySalesSummary = async (req, res) => {
     }
 
     // Filtrar ventas: solo incluir ventas de HOY que NO estén en días ya cerrados
-    // Convertir fecha de venta a string local para comparación consistente
+    // Convertir fecha de venta (timestamp UTC) a fecha local de Buenos Aires
     const salesToInclude = (sales || []).filter((sale) => {
-      const saleDateObj = new Date(sale.date)
-      const saleDateLocal = getLocalDateString(saleDateObj)
+      // sale.date es un timestamp ISO (UTC)
+      const saleDate = new Date(sale.date)
+      // Convertir a fecha de Buenos Aires: restar 3 horas para obtener la fecha local
+      const buenosAiresDate = new Date(saleDate.getTime() - (3 * 60 * 60 * 1000))
+      const saleDateLocal = buenosAiresDate.toISOString().split('T')[0]
       // Solo incluir ventas de hoy que no estén en días cerrados
       return saleDateLocal === todayStr && !closedDates.includes(saleDateLocal)
     })
@@ -151,6 +154,14 @@ export const createCashClosure = async (req, res) => {
       return res.status(500).json({ error: 'Error al obtener las ventas' })
     }
 
+    // Filtrar ventas para incluir solo las del día específico (en caso de que el rango capture ventas del día siguiente)
+    const salesForDate = (sales || []).filter((sale) => {
+      const saleDate = new Date(sale.date)
+      const buenosAiresDate = new Date(saleDate.getTime() - (3 * 60 * 60 * 1000))
+      const saleDateLocal = buenosAiresDate.toISOString().split('T')[0]
+      return saleDateLocal === dateStr
+    })
+
     // Calcular totales
     const closureData = {
       user_id: userId,
@@ -160,10 +171,10 @@ export const createCashClosure = async (req, res) => {
       total_card: 0,
       total_transfer: 0,
       total_other: 0,
-      sales_count: sales.length,
+      sales_count: salesForDate.length,
     }
 
-    sales.forEach((sale) => {
+    salesForDate.forEach((sale) => {
       closureData.total_sales += parseFloat(sale.total_amount)
       switch (sale.payment_method) {
         case 'cash':
