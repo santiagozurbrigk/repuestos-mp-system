@@ -92,6 +92,13 @@ const limiter = rateLimit({
   max: 100, // límite de 100 requests por ventana
   skip: (req) => req.method === 'OPTIONS', // No aplicar rate limit a OPTIONS
   handler: (req, res) => {
+    // Asegurar headers CORS en rate limit también
+    const origin = req.headers.origin
+    if (origin && isOriginAllowed(origin)) {
+      res.header('Access-Control-Allow-Origin', origin)
+      res.header('Access-Control-Allow-Credentials', 'true')
+    }
+    
     logger.warn(`Rate limit excedido para IP: ${req.ip}`)
     res.status(429).json({
       error: 'Demasiadas peticiones, por favor intenta más tarde',
