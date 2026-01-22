@@ -29,16 +29,17 @@ export const createSale = async (req, res) => {
         
         // Crear fecha en UTC pero representando la hora local de Buenos Aires
         // Buenos Aires UTC-3: sumar 3 horas para obtener UTC equivalente
+        // Ejemplo: 14:30 BA = 17:30 UTC
         const utcHours = hours + 3
         saleDate = new Date(Date.UTC(year, month - 1, day, utcHours, minutes || 0, 0, 0))
       } else {
-        // Si es solo fecha (YYYY-MM-DD), usar inicio del día en Buenos Aires
+        // Si es solo fecha (YYYY-MM-DD), usar inicio del día en Buenos Aires (00:00 BA = 03:00 UTC)
         const [year, month, day] = date.split('-').map(Number)
         saleDate = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0))
       }
     } else {
-      // Usar fecha y hora actual de Buenos Aires
-      saleDate = new Date(getBuenosAiresDateTime())
+      // Usar fecha y hora actual (servidor en UTC, se convertirá correctamente al leer)
+      saleDate = new Date()
     }
 
     const saleData = {
