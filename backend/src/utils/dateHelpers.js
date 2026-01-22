@@ -7,14 +7,26 @@ const BUENOS_AIRES_OFFSET = -3 // UTC-3
  * Obtiene la fecha actual en formato YYYY-MM-DD usando la zona horaria de Buenos Aires
  */
 export const getBuenosAiresDateString = (date = new Date()) => {
-  // Obtener timestamp UTC
-  const utcTime = date.getTime() + (date.getTimezoneOffset() * 60 * 1000)
+  // date es un objeto Date que puede estar en cualquier timezone
+  // Necesitamos obtener la hora UTC y convertirla a hora de Buenos Aires
   
-  // Aplicar offset de Buenos Aires (UTC-3): restar 3 horas
-  const buenosAiresTime = utcTime - (3 * 60 * 60 * 1000)
+  // Obtener componentes UTC del Date original
+  const utcYear = date.getUTCFullYear()
+  const utcMonth = date.getUTCMonth()
+  const utcDay = date.getUTCDate()
+  const utcHours = date.getUTCHours()
+  const utcMinutes = date.getUTCMinutes()
+  const utcSeconds = date.getUTCSeconds()
+  const utcMs = date.getUTCMilliseconds()
   
-  // Crear Date con esa hora y obtener componentes UTC (que representan la fecha en BA)
+  // Crear un Date en UTC con estos componentes
+  const utcDate = new Date(Date.UTC(utcYear, utcMonth, utcDay, utcHours, utcMinutes, utcSeconds, utcMs))
+  
+  // Restar 3 horas para obtener la hora de Buenos Aires
+  const buenosAiresTime = utcDate.getTime() - (3 * 60 * 60 * 1000)
   const baDate = new Date(buenosAiresTime)
+  
+  // Obtener componentes UTC de la fecha convertida (que representan la fecha en BA)
   const year = baDate.getUTCFullYear()
   const month = String(baDate.getUTCMonth() + 1).padStart(2, '0')
   const day = String(baDate.getUTCDate()).padStart(2, '0')
