@@ -6,6 +6,7 @@ import { ShoppingCart, Wallet, List, TrendingUp, DollarSign } from 'lucide-react
 import { getBuenosAiresDateString } from '../utils/dateHelpers'
 
 export default function Dashboard() {
+  const { error } = useToast()
   const [stats, setStats] = useState({
     todaySales: 0,
     todayCount: 0,
