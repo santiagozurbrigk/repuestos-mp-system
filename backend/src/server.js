@@ -15,7 +15,62 @@ import { logger } from './utils/logger.js'
 const app = express()
 const PORT = env.PORT
 
-// Middleware de logging de requests
+// Configuración de CORS mejorada - DEBE IR PRIMERO
+// Lista de orígenes permitidos (se usa también en el error handler)
+const allowedOrigins = [
+  env.CORS_ORIGIN,
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+].filter(Boolean) // Eliminar valores undefined/null
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true // Permitir requests sin origin
+  
+  // Permitir cualquier origen de Vercel (vercel.app)
+  const isVercelOrigin = origin.includes('.vercel.app')
+  
+  // Permitir cualquier origen de localhost para desarrollo
+  const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
+  
+  return allowedOrigins.includes(origin) || isVercelOrigin || isLocalhost
+}
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, true)
+    } else {
+      logger.warn(`CORS bloqueado para origin: ${origin}`)
+      callback(new Error('No permitido por CORS'))
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400, // 24 horas
+}
+
+// Aplicar CORS a todas las rutas PRIMERO
+app.use(cors(corsOptions))
+
+// Manejar peticiones OPTIONS (preflight) ANTES de cualquier otro middleware
+app.options('*', (req, res) => {
+  const origin = req.headers.origin
+  if (origin && isOriginAllowed(origin)) {
+    res.header('Access-Control-Allow-Origin', origin)
+    res.header('Access-Control-Allow-Credentials', 'true')
+  } else if (!origin) {
+    res.header('Access-Control-Allow-Origin', '*')
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  res.header('Access-Control-Max-Age', '86400')
+  res.sendStatus(200)
+})
+
+// Middleware de logging de requests (después de CORS)
 app.use((req, res, next) => {
   const startTime = Date.now()
   
@@ -46,47 +101,6 @@ const limiter = rateLimit({
 
 app.use(limiter)
 
-// Configuración de CORS mejorada
-const corsOptions = {
-  origin: (origin, callback) => {
-    // Permitir requests sin origin (como Postman o aplicaciones móviles)
-    if (!origin) return callback(null, true)
-    
-    const allowedOrigins = [
-      env.CORS_ORIGIN,
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'http://127.0.0.1:5173',
-    ]
-    
-    // Permitir cualquier origen de Vercel (vercel.app)
-    const isVercelOrigin = origin.includes('.vercel.app')
-    
-    // Permitir cualquier origen de localhost para desarrollo
-    const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
-    
-    if (allowedOrigins.includes(origin) || isVercelOrigin || isLocalhost) {
-      callback(null, true)
-    } else {
-      logger.warn(`CORS bloqueado para origin: ${origin}`)
-      callback(new Error('No permitido por CORS'))
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400, // 24 horas
-}
-
-app.use(cors(corsOptions))
-
-// Manejar peticiones OPTIONS (preflight) antes de cualquier middleware de autenticación
-app.options('*', cors(corsOptions), (req, res) => {
-  // Preflight requests no necesitan logging en producción
-  res.sendStatus(200)
-})
-
 app.use(express.json())
 
 // Ruta raíz
@@ -115,6 +129,13 @@ app.get('/health', (req, res) => {
 // Middleware para manejar errores de autenticación sin romper CORS
 const handleAuthError = (err, req, res, next) => {
   if (err.name === 'UnauthorizedError' || err.status === 401) {
+    // Asegurar headers CORS en errores de autenticación
+    const origin = req.headers.origin
+    if (origin && isOriginAllowed(origin)) {
+      res.header('Access-Control-Allow-Origin', origin)
+      res.header('Access-Control-Allow-Credentials', 'true')
+    }
+    
     logger.warn(`Acceso no autorizado: ${req.method} ${req.url}`)
     return res.status(401).json({ error: 'Token de autenticación requerido o inválido' })
   }
@@ -132,6 +153,13 @@ app.use(handleAuthError)
 
 // Manejo de rutas no encontradas
 app.use((req, res) => {
+  // Asegurar headers CORS en 404 también
+  const origin = req.headers.origin
+  if (origin && isOriginAllowed(origin)) {
+    res.header('Access-Control-Allow-Origin', origin)
+    res.header('Access-Control-Allow-Credentials', 'true')
+  }
+  
   logger.warn(`Ruta no encontrada: ${req.method} ${req.url}`)
   res.status(404).json({
     error: 'Ruta no encontrada',
@@ -154,9 +182,11 @@ app.use((err, req, res, next) => {
   
   // Asegurar que los headers de CORS estén presentes incluso en errores
   const origin = req.headers.origin
-  if (origin && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+  if (origin && isOriginAllowed(origin)) {
     res.header('Access-Control-Allow-Origin', origin)
     res.header('Access-Control-Allow-Credentials', 'true')
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
   }
   
   res.status(statusCode).json({
