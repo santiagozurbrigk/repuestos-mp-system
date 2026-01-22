@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../services/api'
+import { useToast } from '../contexts/ToastContext'
 import { ShoppingCart, Wallet, List, TrendingUp, DollarSign } from 'lucide-react'
 import { getBuenosAiresDateString } from '../utils/dateHelpers'
 
@@ -69,7 +70,7 @@ export default function Dashboard() {
 
       setStats(statsData)
     } catch (error) {
-      logger.error('Error al obtener estadísticas del dashboard:', error)
+      error('Error al cargar las estadísticas')
     } finally {
       setLoading(false)
     }
