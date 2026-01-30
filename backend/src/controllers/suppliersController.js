@@ -307,34 +307,45 @@ export const updateInvoice = async (req, res) => {
 
     const updateData = {}
 
-    // Solo agregar campos que realmente vienen en el request (no undefined, null o vacío)
-    if (supplier_id !== undefined && supplier_id !== null && supplier_id !== '') {
+    // Solo agregar campos que realmente vienen en el request y tienen valor válido
+    // NO incluir campos que sean undefined, null, string vacío, o string "undefined"
+    const isValidValue = (val) => {
+      return val !== undefined && 
+             val !== null && 
+             val !== '' && 
+             String(val).trim() !== '' &&
+             String(val) !== 'undefined'
+    }
+
+    if (isValidValue(supplier_id)) {
       updateData.supplier_id = supplier_id
     }
-    if (invoice_number !== undefined && invoice_number !== null && invoice_number !== '') {
+    if (isValidValue(invoice_number)) {
       updateData.invoice_number = invoice_number
     }
-    if (invoice_date !== undefined && invoice_date !== null) {
+    if (isValidValue(invoice_date)) {
       const invoiceDateObj = new Date(invoice_date + 'T03:00:00Z')
       updateData.invoice_date = invoiceDateObj.toISOString().split('T')[0]
     }
     if (due_date !== undefined) {
-      updateData.due_date = due_date ? new Date(due_date + 'T03:00:00Z').toISOString().split('T')[0] : null
+      updateData.due_date = isValidValue(due_date) 
+        ? new Date(due_date + 'T03:00:00Z').toISOString().split('T')[0]
+        : null
     }
-    if (amount !== undefined && amount !== null && amount !== '') {
+    if (isValidValue(amount)) {
       updateData.amount = parseFloat(amount)
     }
-    if (paid_amount !== undefined && paid_amount !== null && paid_amount !== '') {
+    if (isValidValue(paid_amount)) {
       updateData.paid_amount = parseFloat(paid_amount)
     }
     if (is_paid !== undefined) {
       updateData.is_paid = is_paid
       // Si se marca como pagada y no tiene paid_amount, igualar a amount
-      if (is_paid && (paid_amount === undefined || paid_amount === null || paid_amount === 0)) {
+      if (is_paid && !isValidValue(paid_amount)) {
         // Obtener el amount del updateData o necesitamos obtenerlo de la factura existente
         if (updateData.amount !== undefined) {
           updateData.paid_amount = updateData.amount
-        } else if (amount !== undefined) {
+        } else if (isValidValue(amount)) {
           updateData.paid_amount = parseFloat(amount)
         } else {
           // Necesitamos obtener el amount de la factura existente
@@ -351,25 +362,20 @@ export const updateInvoice = async (req, res) => {
       }
     }
     if (payment_date !== undefined) {
-      updateData.payment_date = payment_date
+      updateData.payment_date = isValidValue(payment_date)
         ? new Date(payment_date + 'T03:00:00Z').toISOString().split('T')[0]
         : null
     }
-    if (payment_method !== undefined && payment_method !== null && payment_method !== '') {
+    if (isValidValue(payment_method)) {
       const validPaymentMethods = ['cash', 'card', 'transfer', 'other']
       if (!validPaymentMethods.includes(payment_method)) {
         return res.status(400).json({ error: 'Método de pago inválido' })
       }
       updateData.payment_method = payment_method
-    } else if (payment_method === null || payment_method === '') {
-      // Permitir establecer como null si se envía explícitamente
-      updateData.payment_method = null
     }
-    if (observations !== undefined && observations !== null && observations !== '') {
+    // NO incluir observations si está vacío - simplemente no lo agregamos al updateData
+    if (isValidValue(observations)) {
       updateData.observations = observations
-    } else if (observations === null || observations === '') {
-      // Permitir establecer como null si se envía explícitamente
-      updateData.observations = null
     }
 
     // Validar que paid_amount no sea mayor que amount

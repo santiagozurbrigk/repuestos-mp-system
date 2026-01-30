@@ -149,22 +149,32 @@ export default function Suppliers() {
         is_paid: invoiceFormData.is_paid || false,
       }
 
-      // Solo agregar campos que tienen valor
-      if (invoiceFormData.due_date) {
+      // Solo agregar campos que tienen valor (no vacíos, no undefined, no null)
+      if (invoiceFormData.due_date && invoiceFormData.due_date.trim() !== '') {
         data.due_date = invoiceFormData.due_date
       }
-      if (invoiceFormData.paid_amount) {
-        data.paid_amount = parseFloat(invoiceFormData.paid_amount)
-      } else if (data.is_paid) {
-        data.paid_amount = data.amount
+      
+      if (invoiceFormData.is_paid) {
+        if (invoiceFormData.paid_amount && invoiceFormData.paid_amount.toString().trim() !== '') {
+          data.paid_amount = parseFloat(invoiceFormData.paid_amount)
+        } else {
+          data.paid_amount = data.amount
+        }
+        if (invoiceFormData.payment_date && invoiceFormData.payment_date.trim() !== '') {
+          data.payment_date = invoiceFormData.payment_date
+        }
+        if (invoiceFormData.payment_method && invoiceFormData.payment_method.trim() !== '') {
+          data.payment_method = invoiceFormData.payment_method
+        }
+      } else {
+        // Si no está pagada, no enviar payment_date ni payment_method
+        data.paid_amount = invoiceFormData.paid_amount && invoiceFormData.paid_amount.toString().trim() !== ''
+          ? parseFloat(invoiceFormData.paid_amount)
+          : 0
       }
-      if (invoiceFormData.payment_date) {
-        data.payment_date = invoiceFormData.payment_date
-      }
-      if (invoiceFormData.payment_method) {
-        data.payment_method = invoiceFormData.payment_method
-      }
-      if (invoiceFormData.observations) {
+      
+      // Solo agregar observations si tiene contenido
+      if (invoiceFormData.observations && invoiceFormData.observations.trim() !== '') {
         data.observations = invoiceFormData.observations
       }
 
