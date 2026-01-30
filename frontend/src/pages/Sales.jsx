@@ -70,8 +70,6 @@ export default function Sales() {
       setLoading(true)
       const response = await api.get('/sales?limit=100')
       setSales(response.data)
-      // Recargar fechas cerradas después de obtener ventas
-      fetchClosedDates()
     } catch (err) {
       error('Error al cargar las ventas')
     } finally {
