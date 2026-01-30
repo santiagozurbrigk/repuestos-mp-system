@@ -6,6 +6,7 @@ import {
   Wallet, 
   List, 
   BarChart3,
+  Building2,
   LogOut
 } from 'lucide-react'
 
@@ -18,6 +19,7 @@ export default function Layout() {
     { name: 'Ventas', href: '/sales', icon: ShoppingCart },
     { name: 'Cierre de Caja', href: '/cash-closure', icon: Wallet },
     { name: 'Listas de Pedidos', href: '/order-lists', icon: List },
+    { name: 'Proveedores', href: '/suppliers', icon: Building2 },
     { name: 'Estadísticas', href: '/statistics', icon: BarChart3 },
   ]
 
