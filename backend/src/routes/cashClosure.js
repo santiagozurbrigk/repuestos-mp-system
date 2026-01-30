@@ -4,6 +4,7 @@ import {
   getCashClosureByDate,
   createCashClosure,
   getTodaySalesSummary,
+  updateCashClosure,
   deleteCashClosure,
 } from '../controllers/cashClosureController.js'
 
@@ -13,6 +14,7 @@ router.get('/', getCashClosures)
 router.get('/today-summary', getTodaySalesSummary)
 router.get('/:date', getCashClosureByDate)
 router.post('/', createCashClosure)
+router.put('/:id', updateCashClosure)
 router.delete('/:id', deleteCashClosure)
 
 export default router

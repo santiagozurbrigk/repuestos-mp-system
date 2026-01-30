@@ -9,9 +9,10 @@ import { getBuenosAiresDateString, formatDateTimeLocal } from '../utils/dateHelp
 
 const paymentMethodLabels = {
   cash: 'Efectivo',
-  card: 'Tarjeta',
-  transfer: 'Transferencia',
-  other: 'Otros',
+  debit: 'Débito',
+  credit: 'Crédito',
+  expenses: 'Gastos Varios',
+  freight: 'Flete',
 }
 
 export default function Sales() {
@@ -28,6 +29,10 @@ export default function Sales() {
     observations: '',
     date: formatDateTimeLocal(),
   })
+
+  const isExpense = (method) => {
+    return method === 'expenses' || method === 'freight'
+  }
 
   useEffect(() => {
     fetchSales()
@@ -146,7 +151,7 @@ export default function Sales() {
       const buenosAiresDate = new Date(saleDate.getTime() - (3 * 60 * 60 * 1000))
       const saleDateStr = buenosAiresDate.toISOString().split('T')[0]
       const todayStr = getBuenosAiresDateString()
-      return saleDateStr === todayStr
+      return saleDateStr === todayStr && !isExpense(sale.payment_method)
     })
     .reduce((sum, sale) => sum + parseFloat(sale.total_amount), 0)
 
@@ -160,9 +165,10 @@ export default function Sales() {
 
   const paymentMethodColors = {
     cash: 'bg-blue-100 text-blue-700 border-blue-200',
-    card: 'bg-blue-100 text-blue-700 border-blue-200',
-    transfer: 'bg-blue-100 text-blue-700 border-blue-200',
-    other: 'bg-blue-100 text-blue-700 border-blue-200',
+    debit: 'bg-green-100 text-green-700 border-green-200',
+    credit: 'bg-purple-100 text-purple-700 border-purple-200',
+    expenses: 'bg-red-100 text-red-700 border-red-200',
+    freight: 'bg-orange-100 text-orange-700 border-orange-200',
   }
 
   return (
@@ -339,11 +345,17 @@ export default function Sales() {
                           }
                         }}
                       >
-                        <option value="cash">Efectivo</option>
-                        <option value="card">Tarjeta</option>
-                        <option value="transfer">Transferencia</option>
-                        <option value="other">Otros</option>
+                        {Object.entries(paymentMethodLabels).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
                       </select>
+                      {(formData.payment_method === 'expenses' || formData.payment_method === 'freight') && (
+                        <p className="mt-2 text-sm text-red-600">
+                          ⚠️ Este registro se restará del total de caja (egreso)
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-2">

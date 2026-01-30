@@ -64,35 +64,81 @@ export const getTodaySalesSummary = async (req, res) => {
       return saleDateLocal === todayStr && !closedDates.includes(saleDateLocal)
     })
 
-    // Calcular totales solo de ventas que no están en cierres anteriores
-    const summary = {
-      closure_date: todayStr,
-      total_sales: 0,
-      total_cash: 0,
-      total_card: 0,
-      total_transfer: 0,
-      total_other: 0,
-      sales_count: salesToInclude.length,
-      isClosed: false,
+    // Obtener el cierre del día anterior para calcular el balance inicial
+    const yesterday = new Date(todayStr)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const yesterdayStr = yesterday.toISOString().split('T')[0]
+    
+    const { data: previousClosure } = await supabase
+      .from('cash_closures')
+      .select('final_balance, bank_withdrawal')
+      .eq('closure_date', yesterdayStr)
+      .maybeSingle()
+
+    // Calcular balance inicial: final_balance del día anterior - retiro bancario
+    let initialBalance = 0
+    if (previousClosure) {
+      const withdrawal = previousClosure.bank_withdrawal || 0
+      initialBalance = parseFloat(previousClosure.final_balance || 0) - parseFloat(withdrawal)
     }
 
+    // Calcular totales solo de ventas que no están en cierres anteriores
+    let totalSales = 0
+    let totalCash = 0
+    let totalDebit = 0
+    let totalCredit = 0
+    let totalExpenses = 0
+    let totalFreight = 0
+
     salesToInclude.forEach((sale) => {
-      summary.total_sales += parseFloat(sale.total_amount)
+      const amount = parseFloat(sale.total_amount)
+      
+      // Solo contar como ventas si NO son egresos
+      if (sale.payment_method !== 'expenses' && sale.payment_method !== 'freight') {
+        totalSales += amount
+      }
+      
       switch (sale.payment_method) {
         case 'cash':
-          summary.total_cash += parseFloat(sale.total_amount)
+          totalCash += amount
           break
-        case 'card':
-          summary.total_card += parseFloat(sale.total_amount)
+        case 'debit':
+          totalDebit += amount
           break
-        case 'transfer':
-          summary.total_transfer += parseFloat(sale.total_amount)
+        case 'credit':
+          totalCredit += amount
           break
-        case 'other':
-          summary.total_other += parseFloat(sale.total_amount)
+        case 'expenses':
+          totalExpenses += amount
+          break
+        case 'freight':
+          totalFreight += amount
           break
       }
     })
+
+    // Calcular comisiones de empleados (solo sobre ventas, no egresos)
+    const fernandoCommission = totalSales * 0.10
+    const pedroCommission = totalSales * 0.15
+
+    // Calcular balance final: inicial + ventas - egresos - comisiones
+    const finalBalance = initialBalance + totalSales - totalExpenses - totalFreight - fernandoCommission - pedroCommission
+
+    const summary = {
+      closure_date: todayStr,
+      total_sales: totalSales,
+      total_cash: totalCash,
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      total_expenses: totalExpenses,
+      total_freight: totalFreight,
+      sales_count: salesToInclude.length,
+      initial_balance: initialBalance,
+      fernando_commission: fernandoCommission,
+      pedro_commission: pedroCommission,
+      final_balance: finalBalance,
+      isClosed: false,
+    }
 
     res.json(summary)
   } catch (error) {
@@ -162,35 +208,81 @@ export const createCashClosure = async (req, res) => {
       return saleDateLocal === dateStr
     })
 
-    // Calcular totales
-    const closureData = {
-      user_id: userId,
-      closure_date: dateStr,
-      total_sales: 0,
-      total_cash: 0,
-      total_card: 0,
-      total_transfer: 0,
-      total_other: 0,
-      sales_count: salesForDate.length,
+    // Obtener el cierre del día anterior para calcular el balance inicial
+    const dateObj = new Date(dateStr)
+    dateObj.setDate(dateObj.getDate() - 1)
+    const previousDateStr = dateObj.toISOString().split('T')[0]
+    
+    const { data: previousClosure } = await supabase
+      .from('cash_closures')
+      .select('final_balance, bank_withdrawal')
+      .eq('closure_date', previousDateStr)
+      .maybeSingle()
+
+    // Calcular balance inicial: final_balance del día anterior - retiro bancario
+    let initialBalance = 0
+    if (previousClosure) {
+      const withdrawal = previousClosure.bank_withdrawal || 0
+      initialBalance = parseFloat(previousClosure.final_balance || 0) - parseFloat(withdrawal)
     }
 
+    // Calcular totales
+    let totalSales = 0
+    let totalCash = 0
+    let totalDebit = 0
+    let totalCredit = 0
+    let totalExpenses = 0
+    let totalFreight = 0
+
     salesForDate.forEach((sale) => {
-      closureData.total_sales += parseFloat(sale.total_amount)
+      const amount = parseFloat(sale.total_amount)
+      
+      // Solo contar como ventas si NO son egresos
+      if (sale.payment_method !== 'expenses' && sale.payment_method !== 'freight') {
+        totalSales += amount
+      }
+      
       switch (sale.payment_method) {
         case 'cash':
-          closureData.total_cash += parseFloat(sale.total_amount)
+          totalCash += amount
           break
-        case 'card':
-          closureData.total_card += parseFloat(sale.total_amount)
+        case 'debit':
+          totalDebit += amount
           break
-        case 'transfer':
-          closureData.total_transfer += parseFloat(sale.total_amount)
+        case 'credit':
+          totalCredit += amount
           break
-        case 'other':
-          closureData.total_other += parseFloat(sale.total_amount)
+        case 'expenses':
+          totalExpenses += amount
+          break
+        case 'freight':
+          totalFreight += amount
           break
       }
     })
+
+    // Calcular comisiones de empleados (solo sobre ventas, no egresos)
+    const fernandoCommission = totalSales * 0.10
+    const pedroCommission = totalSales * 0.15
+
+    // Calcular balance final: inicial + ventas - egresos - comisiones
+    const finalBalance = initialBalance + totalSales - totalExpenses - totalFreight - fernandoCommission - pedroCommission
+
+    const closureData = {
+      user_id: userId,
+      closure_date: dateStr,
+      total_sales: totalSales,
+      total_cash: totalCash,
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      total_expenses: totalExpenses,
+      total_freight: totalFreight,
+      sales_count: salesForDate.length,
+      initial_balance: initialBalance,
+      fernando_commission: fernandoCommission,
+      pedro_commission: pedroCommission,
+      final_balance: finalBalance,
+    }
 
     const { data, error } = await supabase
       .from('cash_closures')
@@ -264,6 +356,43 @@ export const getCashClosureByDate = async (req, res) => {
     res.json(data)
   } catch (error) {
     logger.error('Error inesperado en getCashClosureByDate:', error)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+}
+
+export const updateCashClosure = async (req, res) => {
+  try {
+    const { id } = req.params
+    const { bank_withdrawal } = req.body
+
+    if (bank_withdrawal === undefined) {
+      return res.status(400).json({ error: 'El monto de retiro bancario es requerido' })
+    }
+
+    const withdrawalAmount = parseFloat(bank_withdrawal)
+    if (isNaN(withdrawalAmount) || withdrawalAmount < 0) {
+      return res.status(400).json({ error: 'El monto de retiro bancario debe ser un número válido mayor o igual a 0' })
+    }
+
+    const { data, error } = await supabase
+      .from('cash_closures')
+      .update({ bank_withdrawal: withdrawalAmount })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        logger.warn(`Cierre de caja no encontrado: ${id}`)
+        return res.status(404).json({ error: 'Cierre de caja no encontrado' })
+      }
+      logger.error('Error al actualizar cierre de caja en Supabase:', error)
+      return res.status(500).json({ error: 'Error al actualizar el cierre de caja' })
+    }
+
+    res.json(data)
+  } catch (error) {
+    logger.error('Error inesperado en updateCashClosure:', error)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
 }

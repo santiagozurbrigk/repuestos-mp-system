@@ -21,6 +21,8 @@ export default function CashClosure() {
   const [closures, setClosures] = useState([])
   const [loading, setLoading] = useState(true)
   const [closing, setClosing] = useState(false)
+  const [editingWithdrawal, setEditingWithdrawal] = useState({})
+  const [withdrawalAmounts, setWithdrawalAmounts] = useState({})
 
   useEffect(() => {
     fetchTodaySummary()
@@ -41,10 +43,35 @@ export default function CashClosure() {
       setLoading(true)
       const response = await api.get('/cash-closure?limit=30')
       setClosures(response.data)
+      // Inicializar withdrawalAmounts con los valores existentes
+      const withdrawals = {}
+      response.data.forEach((closure) => {
+        if (closure.bank_withdrawal !== null && closure.bank_withdrawal !== undefined) {
+          withdrawals[closure.id] = closure.bank_withdrawal.toString()
+        }
+      })
+      setWithdrawalAmounts(withdrawals)
     } catch (err) {
       error('Error al cargar los cierres de caja')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleWithdrawalChange = (closureId, value) => {
+    setWithdrawalAmounts({ ...withdrawalAmounts, [closureId]: value })
+  }
+
+  const handleSaveWithdrawal = async (closureId) => {
+    try {
+      const amount = parseFloat(withdrawalAmounts[closureId] || 0)
+      await api.put(`/cash-closure/${closureId}`, { bank_withdrawal: amount })
+      success('Retiro bancario guardado correctamente')
+      setEditingWithdrawal({ ...editingWithdrawal, [closureId]: false })
+      await fetchClosures()
+      await fetchTodaySummary() // Actualizar el resumen para recalcular balance inicial
+    } catch (err) {
+      error('Error al guardar el retiro bancario')
     }
   }
 
@@ -141,29 +168,67 @@ export default function CashClosure() {
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                <div className="text-xs font-medium text-gray-600 mb-1">Efectivo</div>
-                <div className="text-xl font-bold text-gray-900">
-                  ${parseFloat(todaySummary.total_cash).toFixed(2)}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
+                <div className="text-xs font-medium text-blue-700 mb-1">Efectivo</div>
+                <div className="text-xl font-bold text-blue-900">
+                  ${parseFloat(todaySummary.total_cash || 0).toFixed(2)}
                 </div>
               </div>
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                <div className="text-xs font-medium text-gray-600 mb-1">Tarjeta</div>
-                <div className="text-xl font-bold text-gray-900">
-                  ${parseFloat(todaySummary.total_card).toFixed(2)}
+              <div className="bg-green-50 p-4 rounded-xl border border-green-200">
+                <div className="text-xs font-medium text-green-700 mb-1">Débito</div>
+                <div className="text-xl font-bold text-green-900">
+                  ${parseFloat(todaySummary.total_debit || 0).toFixed(2)}
                 </div>
               </div>
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                <div className="text-xs font-medium text-gray-600 mb-1">Transferencia</div>
-                <div className="text-xl font-bold text-gray-900">
-                  ${parseFloat(todaySummary.total_transfer).toFixed(2)}
+              <div className="bg-purple-50 p-4 rounded-xl border border-purple-200">
+                <div className="text-xs font-medium text-purple-700 mb-1">Crédito</div>
+                <div className="text-xl font-bold text-purple-900">
+                  ${parseFloat(todaySummary.total_credit || 0).toFixed(2)}
                 </div>
               </div>
+              <div className="bg-red-50 p-4 rounded-xl border border-red-200">
+                <div className="text-xs font-medium text-red-700 mb-1">Gastos Varios</div>
+                <div className="text-xl font-bold text-red-900">
+                  -${parseFloat(todaySummary.total_expenses || 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-orange-50 p-4 rounded-xl border border-orange-200">
+                <div className="text-xs font-medium text-orange-700 mb-1">Flete</div>
+                <div className="text-xl font-bold text-orange-900">
+                  -${parseFloat(todaySummary.total_freight || 0).toFixed(2)}
+                </div>
+              </div>
+            </div>
+            
+            {/* Cards de empleados */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 p-4 rounded-xl border border-indigo-200">
+                <div className="text-xs font-semibold text-indigo-700 mb-1">Fernando (10%)</div>
+                <div className="text-2xl font-bold text-indigo-900">
+                  ${parseFloat(todaySummary.fernando_commission || 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-cyan-50 to-cyan-100/50 p-4 rounded-xl border border-cyan-200">
+                <div className="text-xs font-semibold text-cyan-700 mb-1">Pedro (15%)</div>
+                <div className="text-2xl font-bold text-cyan-900">
+                  ${parseFloat(todaySummary.pedro_commission || 0).toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            {/* Balance inicial y final */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                <div className="text-xs font-medium text-gray-600 mb-1">Otros</div>
+                <div className="text-xs font-medium text-gray-600 mb-1">Balance Inicial</div>
                 <div className="text-xl font-bold text-gray-900">
-                  ${parseFloat(todaySummary.total_other).toFixed(2)}
+                  ${parseFloat(todaySummary.initial_balance || 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-4 rounded-xl border border-emerald-200">
+                <div className="text-xs font-semibold text-emerald-700 mb-1">Balance Final</div>
+                <div className="text-2xl font-bold text-emerald-900">
+                  ${parseFloat(todaySummary.final_balance || 0).toFixed(2)}
                 </div>
               </div>
             </div>
@@ -217,34 +282,114 @@ export default function CashClosure() {
                         </span>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                    <div className="grid grid-cols-2 md:grid-cols-7 gap-3 text-sm mb-3">
+                      <div className="bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
+                        <span className="text-blue-700 text-xs block mb-1">Efectivo</span>
+                        <span className="font-bold text-blue-900">
+                          ${parseFloat(closure.total_cash || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-green-50 rounded-lg px-3 py-2 border border-green-200">
+                        <span className="text-green-700 text-xs block mb-1">Débito</span>
+                        <span className="font-bold text-green-900">
+                          ${parseFloat(closure.total_debit || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-purple-50 rounded-lg px-3 py-2 border border-purple-200">
+                        <span className="text-purple-700 text-xs block mb-1">Crédito</span>
+                        <span className="font-bold text-purple-900">
+                          ${parseFloat(closure.total_credit || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-red-50 rounded-lg px-3 py-2 border border-red-200">
+                        <span className="text-red-700 text-xs block mb-1">Gastos</span>
+                        <span className="font-bold text-red-900">
+                          ${parseFloat(closure.total_expenses || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-orange-50 rounded-lg px-3 py-2 border border-orange-200">
+                        <span className="text-orange-700 text-xs block mb-1">Flete</span>
+                        <span className="font-bold text-orange-900">
+                          ${parseFloat(closure.total_freight || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-indigo-50 rounded-lg px-3 py-2 border border-indigo-200">
+                        <span className="text-indigo-700 text-xs block mb-1">Fernando</span>
+                        <span className="font-bold text-indigo-900">
+                          ${parseFloat(closure.fernando_commission || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-cyan-50 rounded-lg px-3 py-2 border border-cyan-200">
+                        <span className="text-cyan-700 text-xs block mb-1">Pedro</span>
+                        <span className="font-bold text-cyan-900">
+                          ${parseFloat(closure.pedro_commission || 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                       <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
-                        <span className="text-gray-600 text-xs block mb-1">Total</span>
+                        <span className="text-gray-600 text-xs block mb-1">Total Ventas</span>
                         <span className="font-bold text-gray-900">
-                          ${parseFloat(closure.total_sales).toFixed(2)}
+                          ${parseFloat(closure.total_sales || 0).toFixed(2)}
                         </span>
                       </div>
                       <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
-                        <span className="text-gray-600 text-xs block mb-1">Efectivo</span>
+                        <span className="text-gray-600 text-xs block mb-1">Balance Final</span>
                         <span className="font-bold text-gray-900">
-                          ${parseFloat(closure.total_cash).toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
-                        <span className="text-gray-600 text-xs block mb-1">Tarjeta</span>
-                        <span className="font-bold text-gray-900">
-                          ${parseFloat(closure.total_card).toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
-                        <span className="text-gray-600 text-xs block mb-1">Transferencia</span>
-                        <span className="font-bold text-gray-900">
-                          ${parseFloat(closure.total_transfer).toFixed(2)}
+                          ${parseFloat(closure.final_balance || 0).toFixed(2)}
                         </span>
                       </div>
                       <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
                         <span className="text-gray-600 text-xs block mb-1">Ventas</span>
                         <span className="font-bold text-gray-900">{closure.sales_count}</span>
+                      </div>
+                      <div className="bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-200">
+                        <span className="text-emerald-700 text-xs block mb-1">Retiro Banco</span>
+                        {editingWithdrawal[closure.id] ? (
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={withdrawalAmounts[closure.id] || ''}
+                              onChange={(e) => handleWithdrawalChange(closure.id, e.target.value)}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                              placeholder="0.00"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  handleSaveWithdrawal(closure.id)
+                                }
+                                if (e.key === 'Escape') {
+                                  setEditingWithdrawal({ ...editingWithdrawal, [closure.id]: false })
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={() => handleSaveWithdrawal(closure.id)}
+                              className="px-2 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => setEditingWithdrawal({ ...editingWithdrawal, [closure.id]: false })}
+                              className="px-2 py-1 text-xs bg-gray-400 text-white rounded hover:bg-gray-500"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <div 
+                            className="cursor-pointer hover:bg-emerald-100 rounded px-1 -mx-1"
+                            onClick={() => setEditingWithdrawal({ ...editingWithdrawal, [closure.id]: true })}
+                          >
+                            <span className="font-bold text-emerald-900">
+                              ${parseFloat(closure.bank_withdrawal || 0).toFixed(2)}
+                            </span>
+                            <span className="text-xs text-emerald-600 ml-1">(click para editar)</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

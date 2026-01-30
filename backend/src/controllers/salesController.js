@@ -13,7 +13,7 @@ export const createSale = async (req, res) => {
       return res.status(400).json({ error: 'Monto total y método de pago son requeridos' })
     }
 
-    const validPaymentMethods = ['cash', 'card', 'transfer', 'other']
+    const validPaymentMethods = ['cash', 'debit', 'credit', 'expenses', 'freight']
     if (!validPaymentMethods.includes(payment_method)) {
       return res.status(400).json({ error: 'Método de pago inválido' })
     }
@@ -135,7 +135,7 @@ export const updateSale = async (req, res) => {
 
     if (total_amount !== undefined) updateData.total_amount = parseFloat(total_amount)
     if (payment_method !== undefined) {
-      const validPaymentMethods = ['cash', 'card', 'transfer', 'other']
+      const validPaymentMethods = ['cash', 'debit', 'credit', 'expenses', 'freight']
       if (!validPaymentMethods.includes(payment_method)) {
         return res.status(400).json({ error: 'Método de pago inválido' })
       }
