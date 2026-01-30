@@ -87,10 +87,13 @@ app.use((req, res, next) => {
 })
 
 // Rate limiting (excluir peticiones OPTIONS)
+// Configuración más permisiva para uso normal de la aplicación
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // límite de 100 requests por ventana
+  max: 500, // límite de 500 requests por ventana (aumentado de 100)
   skip: (req) => req.method === 'OPTIONS', // No aplicar rate limit a OPTIONS
+  standardHeaders: true, // Retornar rate limit info en `RateLimit-*` headers
+  legacyHeaders: false, // Deshabilitar `X-RateLimit-*` headers
   handler: (req, res) => {
     // Asegurar headers CORS en rate limit también
     const origin = req.headers.origin
