@@ -255,8 +255,9 @@ export default function Suppliers() {
       const newIsPaid = !invoice.is_paid
       const updateData = {
         is_paid: newIsPaid,
-        paid_amount: newIsPaid ? invoice.amount : 0,
+        paid_amount: newIsPaid ? parseFloat(invoice.amount) : 0,
         payment_date: newIsPaid ? getBuenosAiresDateString() : null,
+        payment_method: newIsPaid ? (invoice.payment_method || 'cash') : null,
       }
       await api.put(`/suppliers/invoices/${invoice.id}`, updateData)
       success(newIsPaid ? 'Factura marcada como pagada' : 'Factura marcada como no pagada')

@@ -307,22 +307,41 @@ export const updateInvoice = async (req, res) => {
 
     const updateData = {}
 
-    if (supplier_id !== undefined) updateData.supplier_id = supplier_id
-    if (invoice_number !== undefined) updateData.invoice_number = invoice_number
-    if (invoice_date !== undefined) {
+    // Solo agregar campos que realmente vienen en el request (no undefined)
+    if (supplier_id !== undefined && supplier_id !== null) updateData.supplier_id = supplier_id
+    if (invoice_number !== undefined && invoice_number !== null) updateData.invoice_number = invoice_number
+    if (invoice_date !== undefined && invoice_date !== null) {
       const invoiceDateObj = new Date(invoice_date + 'T03:00:00Z')
       updateData.invoice_date = invoiceDateObj.toISOString().split('T')[0]
     }
     if (due_date !== undefined) {
       updateData.due_date = due_date ? new Date(due_date + 'T03:00:00Z').toISOString().split('T')[0] : null
     }
-    if (amount !== undefined) updateData.amount = parseFloat(amount)
-    if (paid_amount !== undefined) updateData.paid_amount = parseFloat(paid_amount)
+    if (amount !== undefined && amount !== null) updateData.amount = parseFloat(amount)
+    if (paid_amount !== undefined && paid_amount !== null) {
+      updateData.paid_amount = parseFloat(paid_amount)
+    }
     if (is_paid !== undefined) {
       updateData.is_paid = is_paid
       // Si se marca como pagada y no tiene paid_amount, igualar a amount
-      if (is_paid && (!paid_amount || paid_amount === 0)) {
-        updateData.paid_amount = updateData.amount || amount
+      if (is_paid && (paid_amount === undefined || paid_amount === null || paid_amount === 0)) {
+        // Obtener el amount del updateData o necesitamos obtenerlo de la factura existente
+        if (updateData.amount !== undefined) {
+          updateData.paid_amount = updateData.amount
+        } else if (amount !== undefined) {
+          updateData.paid_amount = parseFloat(amount)
+        } else {
+          // Necesitamos obtener el amount de la factura existente
+          const { data: existingInvoice } = await supabase
+            .from('supplier_invoices')
+            .select('amount')
+            .eq('id', id)
+            .single()
+          
+          if (existingInvoice) {
+            updateData.paid_amount = parseFloat(existingInvoice.amount)
+          }
+        }
       }
     }
     if (payment_date !== undefined) {
