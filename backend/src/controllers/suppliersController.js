@@ -307,9 +307,13 @@ export const updateInvoice = async (req, res) => {
 
     const updateData = {}
 
-    // Solo agregar campos que realmente vienen en el request (no undefined)
-    if (supplier_id !== undefined && supplier_id !== null) updateData.supplier_id = supplier_id
-    if (invoice_number !== undefined && invoice_number !== null) updateData.invoice_number = invoice_number
+    // Solo agregar campos que realmente vienen en el request (no undefined, null o vacío)
+    if (supplier_id !== undefined && supplier_id !== null && supplier_id !== '') {
+      updateData.supplier_id = supplier_id
+    }
+    if (invoice_number !== undefined && invoice_number !== null && invoice_number !== '') {
+      updateData.invoice_number = invoice_number
+    }
     if (invoice_date !== undefined && invoice_date !== null) {
       const invoiceDateObj = new Date(invoice_date + 'T03:00:00Z')
       updateData.invoice_date = invoiceDateObj.toISOString().split('T')[0]
@@ -317,8 +321,10 @@ export const updateInvoice = async (req, res) => {
     if (due_date !== undefined) {
       updateData.due_date = due_date ? new Date(due_date + 'T03:00:00Z').toISOString().split('T')[0] : null
     }
-    if (amount !== undefined && amount !== null) updateData.amount = parseFloat(amount)
-    if (paid_amount !== undefined && paid_amount !== null) {
+    if (amount !== undefined && amount !== null && amount !== '') {
+      updateData.amount = parseFloat(amount)
+    }
+    if (paid_amount !== undefined && paid_amount !== null && paid_amount !== '') {
       updateData.paid_amount = parseFloat(paid_amount)
     }
     if (is_paid !== undefined) {
@@ -349,16 +355,22 @@ export const updateInvoice = async (req, res) => {
         ? new Date(payment_date + 'T03:00:00Z').toISOString().split('T')[0]
         : null
     }
-    if (payment_method !== undefined) {
-      if (payment_method) {
-        const validPaymentMethods = ['cash', 'card', 'transfer', 'other']
-        if (!validPaymentMethods.includes(payment_method)) {
-          return res.status(400).json({ error: 'Método de pago inválido' })
-        }
+    if (payment_method !== undefined && payment_method !== null && payment_method !== '') {
+      const validPaymentMethods = ['cash', 'card', 'transfer', 'other']
+      if (!validPaymentMethods.includes(payment_method)) {
+        return res.status(400).json({ error: 'Método de pago inválido' })
       }
       updateData.payment_method = payment_method
+    } else if (payment_method === null || payment_method === '') {
+      // Permitir establecer como null si se envía explícitamente
+      updateData.payment_method = null
     }
-    if (observations !== undefined) updateData.observations = observations
+    if (observations !== undefined && observations !== null && observations !== '') {
+      updateData.observations = observations
+    } else if (observations === null || observations === '') {
+      // Permitir establecer como null si se envía explícitamente
+      updateData.observations = null
+    }
 
     // Validar que paid_amount no sea mayor que amount
     if (updateData.paid_amount !== undefined && updateData.amount !== undefined) {

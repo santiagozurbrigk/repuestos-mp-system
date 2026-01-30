@@ -134,12 +134,38 @@ export default function Suppliers() {
   const handleInvoiceSubmit = async (e) => {
     e.preventDefault()
     try {
+      // Construir objeto de datos limpiando campos vacíos/undefined
+      const supplierId = selectedSupplier?.id || invoiceFormData.supplier_id
+      if (!supplierId) {
+        error('Debes seleccionar un proveedor')
+        return
+      }
+
       const data = {
-        ...invoiceFormData,
-        supplier_id: selectedSupplier?.id || invoiceFormData.supplier_id,
+        supplier_id: supplierId,
+        invoice_number: invoiceFormData.invoice_number,
+        invoice_date: invoiceFormData.invoice_date,
         amount: parseFloat(invoiceFormData.amount),
-        paid_amount: invoiceFormData.paid_amount ? parseFloat(invoiceFormData.paid_amount) : 0,
         is_paid: invoiceFormData.is_paid || false,
+      }
+
+      // Solo agregar campos que tienen valor
+      if (invoiceFormData.due_date) {
+        data.due_date = invoiceFormData.due_date
+      }
+      if (invoiceFormData.paid_amount) {
+        data.paid_amount = parseFloat(invoiceFormData.paid_amount)
+      } else if (data.is_paid) {
+        data.paid_amount = data.amount
+      }
+      if (invoiceFormData.payment_date) {
+        data.payment_date = invoiceFormData.payment_date
+      }
+      if (invoiceFormData.payment_method) {
+        data.payment_method = invoiceFormData.payment_method
+      }
+      if (invoiceFormData.observations) {
+        data.observations = invoiceFormData.observations
       }
 
       if (editingInvoice) {
