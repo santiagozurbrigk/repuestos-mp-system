@@ -446,7 +446,7 @@ export const processBarcode = async (req, res) => {
       return res.status(400).json({ error: 'Código de barras requerido' })
     }
 
-    // Verificar si ya existe una factura con este código de barras
+    // Verificar si ya existe una factura con este número de factura (usando barcode como invoice_number)
     const { data: existingInvoice } = await supabase
       .from('supplier_invoices')
       .select('*, suppliers(*)')
@@ -462,64 +462,89 @@ export const processBarcode = async (req, res) => {
 
     // Buscar o crear proveedor
     let supplierId = null
+    let supplierInfo = null
+    
     if (supplier_name) {
-      // Buscar proveedor por nombre
-      const { data: existingSupplier } = await supabase
+      // Buscar proveedor por nombre (búsqueda exacta primero, luego parcial)
+      const { data: exactSupplier } = await supabase
         .from('suppliers')
         .select('*')
-        .ilike('name', `%${supplier_name}%`)
+        .ilike('name', supplier_name.trim())
         .maybeSingle()
 
-      if (existingSupplier) {
-        supplierId = existingSupplier.id
+      if (exactSupplier) {
+        supplierId = exactSupplier.id
+        supplierInfo = exactSupplier
       } else {
-        // Crear proveedor automáticamente
-        const supplierData = {
-          user_id: userId,
-          name: supplier_name,
-          contact_name: supplier_data?.contact_name || null,
-          phone: supplier_data?.phone || null,
-          email: supplier_data?.email || null,
-          address: supplier_data?.address || null,
-          notes: supplier_data?.notes || null,
-        }
-
-        const { data: newSupplier, error: supplierError } = await supabase
+        // Buscar por coincidencia parcial
+        const { data: partialSuppliers } = await supabase
           .from('suppliers')
-          .insert([supplierData])
-          .select()
-          .single()
+          .select('*')
+          .ilike('name', `%${supplier_name.trim()}%`)
+          .limit(1)
 
-        if (supplierError) {
-          logger.error('Error al crear proveedor automáticamente:', supplierError)
-          return res.status(500).json({ error: 'Error al crear el proveedor' })
+        if (partialSuppliers && partialSuppliers.length > 0) {
+          supplierId = partialSuppliers[0].id
+          supplierInfo = partialSuppliers[0]
+        } else {
+          // Crear proveedor automáticamente
+          const supplierData = {
+            user_id: userId,
+            name: supplier_name.trim(),
+            contact_name: supplier_data?.contact_name || null,
+            phone: supplier_data?.phone || null,
+            email: supplier_data?.email || null,
+            address: supplier_data?.address || null,
+            notes: supplier_data?.notes || null,
+          }
+
+          const { data: newSupplier, error: supplierError } = await supabase
+            .from('suppliers')
+            .insert([supplierData])
+            .select()
+            .single()
+
+          if (supplierError) {
+            logger.error('Error al crear proveedor automáticamente:', supplierError)
+            return res.status(500).json({ error: 'Error al crear el proveedor' })
+          }
+
+          supplierId = newSupplier.id
+          supplierInfo = newSupplier
         }
-
-        supplierId = newSupplier.id
       }
     }
 
     // TODO: Aquí deberías integrar con un servicio que decodifique el código de barras
     // Por ahora, retornamos una estructura de ejemplo que el frontend puede completar
     // En producción, esto debería llamar a una API del proveedor o servicio de facturación
+    // que pueda decodificar el código de barras y extraer:
+    // - Número de factura
+    // - Fecha de factura
+    // - Fecha de vencimiento
+    // - Monto total
+    // - Lista de productos con cantidades y precios
+    // - Información del proveedor (nombre, CUIT, etc.)
 
     // Estructura de respuesta con datos extraídos del código de barras
     const decodedData = {
       supplier_id: supplierId,
-      supplier_name: supplier_name || null,
+      supplier_name: supplierInfo?.name || supplier_name || null,
       invoice_number: barcode.substring(0, 20) || barcode, // Usar código como número de factura si no se puede extraer
       invoice_date: getBuenosAiresDateString(),
-      due_date: null, // Se calcularía según el proveedor
-      amount: 0, // Se calcularía desde los items
-      items: [], // Array vacío que se completará manualmente o desde el código
+      due_date: null, // Se calcularía según el proveedor o se extraería del código
+      amount: 0, // Se calcularía desde los items o se extraería del código
+      items: [], // Array vacío que se completará manualmente o desde el código decodificado
     }
 
     res.json({
       success: true,
       data: decodedData,
       message: supplierId
-        ? 'Proveedor encontrado. Por favor, completa los datos de la factura.'
-        : 'Proveedor creado automáticamente. Por favor, completa los datos de la factura.',
+        ? `Proveedor "${supplierInfo?.name}" encontrado. Por favor, completa los datos de la factura.`
+        : supplier_name
+        ? `Proveedor "${supplier_name}" creado automáticamente. Por favor, completa los datos de la factura.`
+        : 'Código de barras procesado. Por favor, selecciona o crea un proveedor y completa los datos de la factura.',
     })
   } catch (error) {
     logger.error('Error inesperado en processBarcode:', error)
