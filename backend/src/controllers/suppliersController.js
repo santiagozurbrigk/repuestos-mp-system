@@ -515,26 +515,81 @@ export const processBarcode = async (req, res) => {
       }
     }
 
-    // TODO: Aquí deberías integrar con un servicio que decodifique el código de barras
-    // Por ahora, retornamos una estructura de ejemplo que el frontend puede completar
-    // En producción, esto debería llamar a una API del proveedor o servicio de facturación
-    // que pueda decodificar el código de barras y extraer:
-    // - Número de factura
-    // - Fecha de factura
-    // - Fecha de vencimiento
-    // - Monto total
-    // - Lista de productos con cantidades y precios
-    // - Información del proveedor (nombre, CUIT, etc.)
-
-    // Estructura de respuesta con datos extraídos del código de barras
-    const decodedData = {
+    // Decodificar código de barras de factura argentina
+    // Formato típico: CUIT(11) + TipoComprobante(2) + PuntoVenta(4) + NumeroFactura(8) + FechaVencimiento(8) + Importe(13) + DigitoVerificador(1)
+    // Ejemplo: 3070869119001004186030628401789202601302
+    //          CUIT: 30708691190, Tipo: 01, PuntoVenta: 0041, NumeroFactura: 86030628, FechaVencimiento: 20260130, Importe: 4017892026013, Digito: 02
+    
+    let decodedData = {
       supplier_id: supplierId,
       supplier_name: supplierInfo?.name || supplier_name || null,
-      invoice_number: barcode.substring(0, 20) || barcode, // Usar código como número de factura si no se puede extraer
+      invoice_number: barcode, // Por defecto usar el código completo
       invoice_date: getBuenosAiresDateString(),
-      due_date: null, // Se calcularía según el proveedor o se extraería del código
-      amount: 0, // Se calcularía desde los items o se extraería del código
-      items: [], // Array vacío que se completará manualmente o desde el código decodificado
+      due_date: null,
+      amount: 0,
+      items: [],
+    }
+
+    // Intentar decodificar el código de barras
+    try {
+      const barcodeStr = barcode.trim()
+      
+      // El código debe tener al menos 47 caracteres para ser válido
+      if (barcodeStr.length >= 47) {
+        // Extraer componentes del código de barras
+        const cuit = barcodeStr.substring(0, 11) // Primeros 11 dígitos: CUIT
+        const tipoComprobante = barcodeStr.substring(11, 13) // Siguientes 2: Tipo de comprobante
+        const puntoVenta = barcodeStr.substring(13, 17) // Siguientes 4: Punto de venta
+        const numeroFactura = barcodeStr.substring(17, 25) // Siguientes 8: Número de factura
+        const fechaVencimientoStr = barcodeStr.substring(25, 33) // Siguientes 8: Fecha de vencimiento (YYYYMMDD)
+        const importeStr = barcodeStr.substring(33, 46) // Siguientes 13: Importe (con decimales implícitos)
+        const digitoVerificador = barcodeStr.substring(46, 47) // Último: Dígito verificador
+
+        // Formatear número de factura (punto de venta - número)
+        const invoiceNumber = `${parseInt(puntoVenta)}-${parseInt(numeroFactura)}`
+        
+        // Parsear fecha de vencimiento (YYYYMMDD -> YYYY-MM-DD)
+        let dueDate = null
+        if (fechaVencimientoStr && fechaVencimientoStr.length === 8) {
+          const year = fechaVencimientoStr.substring(0, 4)
+          const month = fechaVencimientoStr.substring(4, 6)
+          const day = fechaVencimientoStr.substring(6, 8)
+          dueDate = `${year}-${month}-${day}`
+        }
+
+        // Parsear importe (los últimos 2 dígitos son decimales)
+        let amount = 0
+        if (importeStr && importeStr.length >= 2) {
+          const importeSinDecimales = importeStr.substring(0, importeStr.length - 2)
+          const decimales = importeStr.substring(importeStr.length - 2)
+          amount = parseFloat(`${importeSinDecimales}.${decimales}`)
+        }
+
+        // Buscar proveedor por CUIT si no se encontró por nombre
+        if (!supplierId && cuit) {
+          // Buscar en notas o crear uno nuevo con el CUIT
+          // Por ahora, solo guardamos el CUIT en las observaciones si se crea un proveedor
+        }
+
+        decodedData = {
+          supplier_id: supplierId,
+          supplier_name: supplierInfo?.name || supplier_name || null,
+          invoice_number: invoiceNumber,
+          invoice_date: getBuenosAiresDateString(), // La fecha de factura no está en el código, usar fecha actual
+          due_date: dueDate,
+          amount: amount,
+          items: [],
+          cuit: cuit, // Guardar CUIT para referencia
+        }
+      } else {
+        // Si el código es más corto, intentar extraer información básica
+        // Algunos códigos pueden tener formato diferente
+        decodedData.invoice_number = barcodeStr.length > 20 ? barcodeStr.substring(0, 20) : barcodeStr
+      }
+    } catch (error) {
+      logger.warn('Error al decodificar código de barras, usando valores por defecto:', error)
+      // Si falla la decodificación, usar valores por defecto
+      decodedData.invoice_number = barcode.length > 20 ? barcode.substring(0, 20) : barcode
     }
 
     res.json({

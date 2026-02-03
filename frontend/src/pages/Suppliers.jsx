@@ -109,12 +109,12 @@ export default function Suppliers() {
           invoice_number: decodedData.invoice_number || barcode.trim(),
           invoice_date: decodedData.invoice_date || getBuenosAiresDateString(),
           due_date: decodedData.due_date || '',
-          amount: decodedData.amount?.toString() || '',
+          amount: decodedData.amount > 0 ? decodedData.amount.toString() : '',
           paid_amount: '',
           is_paid: false,
           payment_date: '',
           payment_method: 'cash',
-          observations: '',
+          observations: decodedData.cuit ? `CUIT: ${decodedData.cuit}` : '',
         })
         setShowInvoiceModal(true)
         setBarcodeInput('')
