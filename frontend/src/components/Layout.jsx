@@ -10,8 +10,7 @@ import {
   Building2,
   LogOut,
   Menu,
-  X,
-  Package
+  X
 } from 'lucide-react'
 
 export default function Layout() {
@@ -23,7 +22,6 @@ export default function Layout() {
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Ventas', href: '/sales', icon: ShoppingCart },
     { name: 'Cierre de Caja', href: '/cash-closure', icon: Wallet },
-    { name: 'Egreso de Mercadería', href: '/merchandise-out', icon: Package },
     { name: 'Listas de Pedidos', href: '/order-lists', icon: List },
     { name: 'Proveedores', href: '/suppliers', icon: Building2 },
     { name: 'Estadísticas', href: '/statistics', icon: BarChart3 },

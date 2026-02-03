@@ -366,12 +366,16 @@ export const updateInvoice = async (req, res) => {
         ? new Date(payment_date + 'T03:00:00Z').toISOString().split('T')[0]
         : null
     }
-    if (isValidValue(payment_method)) {
-      const validPaymentMethods = ['cash', 'card', 'transfer', 'other']
-      if (!validPaymentMethods.includes(payment_method)) {
-        return res.status(400).json({ error: 'Método de pago inválido' })
+    if (payment_method !== undefined) {
+      if (payment_method === null || payment_method === '') {
+        updateData.payment_method = null
+      } else if (isValidValue(payment_method)) {
+        const validPaymentMethods = ['cash', 'debit', 'credit', 'transfer', 'other']
+        if (!validPaymentMethods.includes(payment_method)) {
+          return res.status(400).json({ error: 'Método de pago inválido' })
+        }
+        updateData.payment_method = payment_method
       }
-      updateData.payment_method = payment_method
     }
     // NO incluir observations si está vacío - simplemente no lo agregamos al updateData
     if (isValidValue(observations)) {
@@ -427,6 +431,98 @@ export const deleteInvoice = async (req, res) => {
     res.json({ message: 'Factura eliminada correctamente' })
   } catch (error) {
     logger.error('Error inesperado en deleteInvoice:', error)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+}
+
+// ========== Procesar código de barras y crear factura automáticamente ==========
+
+export const processBarcode = async (req, res) => {
+  try {
+    const { barcode, supplier_name, supplier_data } = req.body
+    const userId = req.user.id
+
+    if (!barcode) {
+      return res.status(400).json({ error: 'Código de barras requerido' })
+    }
+
+    // Verificar si ya existe una factura con este código de barras
+    const { data: existingInvoice } = await supabase
+      .from('supplier_invoices')
+      .select('*, suppliers(*)')
+      .eq('invoice_number', barcode)
+      .maybeSingle()
+
+    if (existingInvoice) {
+      return res.status(400).json({
+        error: 'Ya existe una factura con este código de barras',
+        existing: existingInvoice,
+      })
+    }
+
+    // Buscar o crear proveedor
+    let supplierId = null
+    if (supplier_name) {
+      // Buscar proveedor por nombre
+      const { data: existingSupplier } = await supabase
+        .from('suppliers')
+        .select('*')
+        .ilike('name', `%${supplier_name}%`)
+        .maybeSingle()
+
+      if (existingSupplier) {
+        supplierId = existingSupplier.id
+      } else {
+        // Crear proveedor automáticamente
+        const supplierData = {
+          user_id: userId,
+          name: supplier_name,
+          contact_name: supplier_data?.contact_name || null,
+          phone: supplier_data?.phone || null,
+          email: supplier_data?.email || null,
+          address: supplier_data?.address || null,
+          notes: supplier_data?.notes || null,
+        }
+
+        const { data: newSupplier, error: supplierError } = await supabase
+          .from('suppliers')
+          .insert([supplierData])
+          .select()
+          .single()
+
+        if (supplierError) {
+          logger.error('Error al crear proveedor automáticamente:', supplierError)
+          return res.status(500).json({ error: 'Error al crear el proveedor' })
+        }
+
+        supplierId = newSupplier.id
+      }
+    }
+
+    // TODO: Aquí deberías integrar con un servicio que decodifique el código de barras
+    // Por ahora, retornamos una estructura de ejemplo que el frontend puede completar
+    // En producción, esto debería llamar a una API del proveedor o servicio de facturación
+
+    // Estructura de respuesta con datos extraídos del código de barras
+    const decodedData = {
+      supplier_id: supplierId,
+      supplier_name: supplier_name || null,
+      invoice_number: barcode.substring(0, 20) || barcode, // Usar código como número de factura si no se puede extraer
+      invoice_date: getBuenosAiresDateString(),
+      due_date: null, // Se calcularía según el proveedor
+      amount: 0, // Se calcularía desde los items
+      items: [], // Array vacío que se completará manualmente o desde el código
+    }
+
+    res.json({
+      success: true,
+      data: decodedData,
+      message: supplierId
+        ? 'Proveedor encontrado. Por favor, completa los datos de la factura.'
+        : 'Proveedor creado automáticamente. Por favor, completa los datos de la factura.',
+    })
+  } catch (error) {
+    logger.error('Error inesperado en processBarcode:', error)
     res.status(500).json({ error: 'Error interno del servidor' })
   }
 }

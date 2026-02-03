@@ -8,7 +8,6 @@ import CashClosure from './pages/CashClosure'
 import OrderLists from './pages/OrderLists'
 import Statistics from './pages/Statistics'
 import Suppliers from './pages/Suppliers'
-import MerchandiseOut from './pages/MerchandiseOut'
 import Layout from './components/Layout'
 
 function ProtectedRoute({ children }) {
@@ -41,7 +40,6 @@ function AppRoutes() {
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="sales" element={<Sales />} />
         <Route path="cash-closure" element={<CashClosure />} />
-        <Route path="merchandise-out" element={<MerchandiseOut />} />
         <Route path="order-lists" element={<OrderLists />} />
         <Route path="statistics" element={<Statistics />} />
         <Route path="suppliers" element={<Suppliers />} />

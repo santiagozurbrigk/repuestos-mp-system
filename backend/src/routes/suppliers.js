@@ -11,9 +11,13 @@ import {
   updateInvoice,
   deleteInvoice,
   getSupplierSummary,
+  processBarcode,
 } from '../controllers/suppliersController.js'
 
 const router = express.Router()
+
+// Ruta para procesar código de barras (debe ir antes de otras rutas)
+router.post('/process-barcode', processBarcode)
 
 // Rutas de facturas (DEBEN IR ANTES de las rutas con parámetros dinámicos)
 router.post('/invoices', createInvoice)

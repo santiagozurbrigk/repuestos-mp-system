@@ -16,6 +16,7 @@ import {
   Phone,
   Mail,
   MapPin,
+  Barcode,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -40,6 +41,8 @@ export default function Suppliers() {
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState(null)
   const [editingInvoice, setEditingInvoice] = useState(null)
+  const [barcodeInput, setBarcodeInput] = useState('')
+  const [scanning, setScanning] = useState(false)
   const [supplierFormData, setSupplierFormData] = useState({
     name: '',
     contact_name: '',
@@ -71,6 +74,67 @@ export default function Suppliers() {
       fetchSupplierSummary(selectedSupplier.id)
     }
   }, [selectedSupplier])
+
+  const handleBarcodeScan = async (barcode) => {
+    if (!barcode || barcode.trim() === '') return
+
+    setScanning(true)
+    try {
+      // Procesar el código de barras
+      const response = await api.post('/suppliers/process-barcode', {
+        barcode: barcode.trim(),
+        supplier_name: null, // Se puede extraer del código o pedir al usuario
+      })
+
+      if (response.data.success) {
+        const decodedData = response.data.data
+
+        // Si se creó un proveedor, recargar la lista
+        if (decodedData.supplier_id) {
+          await fetchSuppliers()
+          // Seleccionar el proveedor creado
+          const { data: updatedSuppliers } = await api.get('/suppliers?limit=1000')
+          const newSupplier = updatedSuppliers.find((s) => s.id === decodedData.supplier_id)
+          if (newSupplier) {
+            setSelectedSupplier(newSupplier)
+          }
+        }
+
+        // Cargar los datos en el formulario de factura
+        setInvoiceFormData({
+          supplier_id: decodedData.supplier_id || '',
+          invoice_number: decodedData.invoice_number || '',
+          invoice_date: decodedData.invoice_date || getBuenosAiresDateString(),
+          due_date: decodedData.due_date || '',
+          amount: decodedData.amount?.toString() || '',
+          paid_amount: '',
+          is_paid: false,
+          payment_date: '',
+          payment_method: 'cash',
+          observations: '',
+        })
+        setShowInvoiceModal(true)
+        setBarcodeInput('')
+        success(response.data.message || 'Código de barras procesado. Completa los datos de la factura.')
+      }
+    } catch (err) {
+      if (err.response?.status === 400 && err.response?.data?.existing) {
+        error('Ya existe una factura con este código de barras')
+        setBarcodeInput('')
+      } else {
+        error('Error al procesar el código de barras')
+      }
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const handleBarcodeInputKeyDown = (e) => {
+    if (e.key === 'Enter' && barcodeInput.trim() !== '') {
+      e.preventDefault()
+      handleBarcodeScan(barcodeInput)
+    }
+  }
 
   const fetchSuppliers = async () => {
     try {
@@ -199,9 +263,11 @@ export default function Suppliers() {
         payment_method: 'cash',
         observations: '',
       })
+      setBarcodeInput('')
+      await fetchSuppliers()
       if (selectedSupplier) {
-        fetchInvoices(selectedSupplier.id)
-        fetchSupplierSummary(selectedSupplier.id)
+        await fetchInvoices(selectedSupplier.id)
+        await fetchSupplierSummary(selectedSupplier.id)
       }
     } catch (err) {
       error('Error al guardar la factura')
@@ -291,10 +357,22 @@ export default function Suppliers() {
       const newIsPaid = !invoice.is_paid
       const updateData = {
         is_paid: newIsPaid,
-        paid_amount: newIsPaid ? parseFloat(invoice.amount) : 0,
-        payment_date: newIsPaid ? getBuenosAiresDateString() : null,
-        payment_method: newIsPaid ? (invoice.payment_method || 'cash') : null,
       }
+      
+      if (newIsPaid) {
+        updateData.paid_amount = parseFloat(invoice.amount)
+        updateData.payment_date = getBuenosAiresDateString()
+        if (invoice.payment_method) {
+          updateData.payment_method = invoice.payment_method
+        } else {
+          updateData.payment_method = 'cash'
+        }
+      } else {
+        updateData.paid_amount = 0
+        updateData.payment_date = null
+        updateData.payment_method = null
+      }
+      
       await api.put(`/suppliers/invoices/${invoice.id}`, updateData)
       success(newIsPaid ? 'Factura marcada como pagada' : 'Factura marcada como no pagada')
       if (selectedSupplier) {
@@ -321,25 +399,61 @@ export default function Suppliers() {
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Proveedores</h1>
           <p className="text-gray-600">Gestiona proveedores y facturas</p>
         </div>
-        <button
-          onClick={() => {
-            setEditingSupplier(null)
-            setSupplierFormData({
-              name: '',
-              contact_name: '',
-              phone: '',
-              email: '',
-              address: '',
-              notes: '',
-            })
-            setShowSupplierModal(true)
-          }}
-          className="inline-flex items-center px-5 py-2.5 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all duration-200"
-        >
-          <Plus className="w-5 h-5 mr-2" />
-          Nuevo Proveedor
-        </button>
+        <div className="flex space-x-3">
+          <button
+            onClick={() => {
+              setEditingSupplier(null)
+              setSupplierFormData({
+                name: '',
+                contact_name: '',
+                phone: '',
+                email: '',
+                address: '',
+                notes: '',
+              })
+              setShowSupplierModal(true)
+            }}
+            className="inline-flex items-center px-5 py-2.5 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all duration-200"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Nuevo Proveedor
+          </button>
+        </div>
       </div>
+
+      {/* Scanner de código de barras */}
+      {!showInvoiceModal && (
+        <div className="bg-white shadow-soft rounded-xl border border-gray-100 p-6 mb-8">
+          <div className="flex items-center space-x-4">
+            <div className="flex-shrink-0">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
+                <Barcode className="w-6 h-6 text-white" />
+              </div>
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Escanear Código de Barras de Factura
+              </label>
+              <input
+                type="text"
+                value={barcodeInput}
+                onChange={(e) => setBarcodeInput(e.target.value)}
+                onKeyDown={handleBarcodeInputKeyDown}
+                placeholder="Escanea o ingresa el código de barras y presiona Enter"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-lg"
+                disabled={scanning}
+                autoFocus
+              />
+              {scanning && (
+                <p className="mt-2 text-sm text-blue-600">Procesando código de barras...</p>
+              )}
+              <p className="mt-2 text-xs text-gray-500">
+                Si el proveedor no existe, se creará automáticamente. La factura se cargará con los datos extraídos.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Lista de Proveedores */}
@@ -491,7 +605,7 @@ export default function Suppliers() {
                     className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 rounded-lg transition-all duration-200"
                   >
                     <Plus className="w-3 h-3 mr-1" />
-                    Nueva Factura
+                    Nueva Factura Manual
                   </button>
                 </div>
                 <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
