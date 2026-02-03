@@ -89,21 +89,24 @@ export default function Suppliers() {
       if (response.data.success) {
         const decodedData = response.data.data
 
-        // Si se creó un proveedor, recargar la lista
+        // Si se creó o encontró un proveedor, recargar la lista y seleccionarlo
         if (decodedData.supplier_id) {
           await fetchSuppliers()
-          // Seleccionar el proveedor creado
+          // Seleccionar el proveedor creado/encontrado
           const { data: updatedSuppliers } = await api.get('/suppliers?limit=1000')
-          const newSupplier = updatedSuppliers.find((s) => s.id === decodedData.supplier_id)
-          if (newSupplier) {
-            setSelectedSupplier(newSupplier)
+          const foundSupplier = updatedSuppliers.find((s) => s.id === decodedData.supplier_id)
+          if (foundSupplier) {
+            setSelectedSupplier(foundSupplier)
+            // Cargar facturas y resumen del proveedor
+            await fetchInvoices(foundSupplier.id)
+            await fetchSupplierSummary(foundSupplier.id)
           }
         }
 
         // Cargar los datos en el formulario de factura
         setInvoiceFormData({
           supplier_id: decodedData.supplier_id || '',
-          invoice_number: decodedData.invoice_number || '',
+          invoice_number: decodedData.invoice_number || barcode.trim(),
           invoice_date: decodedData.invoice_date || getBuenosAiresDateString(),
           due_date: decodedData.due_date || '',
           amount: decodedData.amount?.toString() || '',
@@ -199,7 +202,7 @@ export default function Suppliers() {
     e.preventDefault()
     try {
       // Construir objeto de datos limpiando campos vacíos/undefined
-      const supplierId = selectedSupplier?.id || invoiceFormData.supplier_id
+      const supplierId = invoiceFormData.supplier_id || selectedSupplier?.id
       if (!supplierId) {
         error('Debes seleccionar un proveedor')
         return
@@ -839,6 +842,39 @@ export default function Suppliers() {
             </div>
             <form onSubmit={handleInvoiceSubmit} className="px-6 py-4">
               <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Proveedor <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    required
+                    value={invoiceFormData.supplier_id || selectedSupplier?.id || ''}
+                    onChange={(e) => {
+                      const supplierId = e.target.value
+                      setInvoiceFormData({ ...invoiceFormData, supplier_id: supplierId })
+                      // Actualizar selectedSupplier si se selecciona uno diferente
+                      if (supplierId) {
+                        const supplier = suppliers.find((s) => s.id === supplierId)
+                        if (supplier) {
+                          setSelectedSupplier(supplier)
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar proveedor</option>
+                    {suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                  </select>
+                  {!invoiceFormData.supplier_id && !selectedSupplier && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Si el proveedor no existe, créalo primero desde el botón "Nuevo Proveedor"
+                    </p>
+                  )}
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Número de Factura <span className="text-red-500">*</span>
