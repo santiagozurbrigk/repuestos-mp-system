@@ -107,16 +107,48 @@ GOOGLE_APPLICATION_CREDENTIALS=./google-credentials.json
 
 #### Opción B: Variable de entorno (Recomendado para producción)
 
-1. Abre el archivo JSON descargado
-2. Copia TODO el contenido del JSON
-3. En Render/Vercel, agrega estas variables de entorno:
+**Para Render:**
 
-```env
-GOOGLE_CLOUD_PROJECT_ID=tu-project-id
-GOOGLE_CLOUD_KEY_FILE={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}
+1. Abre el archivo JSON descargado en un editor de texto
+2. **IMPORTANTE:** Convierte el JSON a una sola línea:
+   - Elimina todos los saltos de línea
+   - Elimina todos los espacios innecesarios
+   - Asegúrate de que las comillas estén escapadas correctamente
+3. En Render, ve a tu servicio → "Environment" → "Add Environment Variable"
+4. Agrega estas variables:
+
+```
+GOOGLE_CLOUD_PROJECT_ID=tu-project-id-aqui
+GOOGLE_CLOUD_KEY_FILE={"type":"service_account","project_id":"tu-project-id","private_key_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"...","client_id":"...","auth_uri":"...","token_uri":"...","auth_provider_x509_cert_url":"...","client_x509_cert_url":"..."}
 ```
 
-**Nota:** El `GOOGLE_CLOUD_KEY_FILE` debe ser el JSON completo como una sola línea (sin saltos de línea).
+**⚠️ FORMATO CRÍTICO:** 
+- El `GOOGLE_CLOUD_KEY_FILE` debe ser el JSON completo en UNA SOLA LÍNEA
+- Los saltos de línea dentro de `private_key` deben estar como `\n` (no saltos de línea reales)
+- NO agregues comillas adicionales alrededor del JSON
+- Copia el JSON completo desde `{` hasta `}`
+
+**Ejemplo de conversión:**
+
+Si tu JSON se ve así:
+```json
+{
+  "type": "service_account",
+  "project_id": "mi-proyecto",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nABC123\n-----END PRIVATE KEY-----\n",
+  "client_email": "test@mi-proyecto.iam.gserviceaccount.com"
+}
+```
+
+Debe convertirse a:
+```
+{"type":"service_account","project_id":"mi-proyecto","private_key":"-----BEGIN PRIVATE KEY-----\nABC123\n-----END PRIVATE KEY-----\n","client_email":"test@mi-proyecto.iam.gserviceaccount.com"}
+```
+
+**Herramienta útil:** Puedes usar [jsonformatter.org](https://jsonformatter.org/) para convertir el JSON a una sola línea:
+1. Pega tu JSON completo
+2. Haz clic en "Minify"
+3. Copia el resultado y pégalo en Render
 
 #### Opción C: Application Default Credentials (Solo desarrollo local)
 
@@ -156,10 +188,21 @@ Una vez configurado, puedes probar el escaneo de facturas:
 - Asegúrate de que el archivo JSON existe (si usas Opción A)
 - Verifica que el Project ID sea correcto
 
-### Error: "PERMISSION_DENIED"
+### Error: "PERMISSION_DENIED" o "UNAUTHENTICATED"
 
-- Verifica que la cuenta de servicio tenga el rol "Cloud Vision API User"
-- Asegúrate de que la API esté habilitada en tu proyecto
+- **Verifica el formato del JSON en Render:**
+  - El JSON debe estar en UNA SOLA LÍNEA (sin saltos de línea)
+  - Los `\n` dentro de `private_key` deben estar como texto literal `\n` (no como saltos de línea reales)
+  - No debe tener comillas adicionales alrededor del JSON
+- **Verifica que las variables estén configuradas:**
+  - `GOOGLE_CLOUD_PROJECT_ID` debe coincidir con tu Project ID
+  - `GOOGLE_CLOUD_KEY_FILE` debe contener el JSON completo y válido
+- **Verifica que la API esté habilitada:**
+  - Ve a [API Library](https://console.cloud.google.com/apis/library)
+  - Busca "Cloud Vision API" y verifica que esté habilitada
+- **Verifica los logs del backend en Render:**
+  - Busca mensajes que indiquen si las credenciales se parsearon correctamente
+  - Si ves errores de parsing, el formato del JSON es incorrecto
 
 ### Error: "INVALID_ARGUMENT"
 

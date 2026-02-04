@@ -6,30 +6,65 @@ import { getBuenosAiresDateString } from '../utils/dateHelpers.js'
 
 // Inicializar cliente de Google Cloud Vision
 let visionClient = null
+let visionClientError = null
 
 try {
   // Intentar inicializar con credenciales
   if (config.GOOGLE_APPLICATION_CREDENTIALS) {
     // Si hay un path al archivo JSON
+    logger.info('Inicializando Google Cloud Vision con archivo de credenciales')
     visionClient = new ImageAnnotatorClient({
       keyFilename: config.GOOGLE_APPLICATION_CREDENTIALS,
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     })
+    logger.info('Google Cloud Vision inicializado correctamente con archivo de credenciales')
   } else if (config.GOOGLE_CLOUD_KEY_FILE) {
     // Si el JSON está como string en la variable de entorno
-    const credentials = JSON.parse(config.GOOGLE_CLOUD_KEY_FILE)
-    visionClient = new ImageAnnotatorClient({
-      credentials,
-      projectId: config.GOOGLE_CLOUD_PROJECT_ID,
-    })
-  } else {
+    logger.info('Inicializando Google Cloud Vision con credenciales desde variable de entorno')
+    
+    try {
+      // Intentar parsear el JSON
+      let credentials
+      try {
+        credentials = JSON.parse(config.GOOGLE_CLOUD_KEY_FILE)
+      } catch (parseError) {
+        // Si falla, intentar con escape de caracteres
+        const cleanedJson = config.GOOGLE_CLOUD_KEY_FILE
+          .replace(/\\n/g, '\n')
+          .replace(/\\"/g, '"')
+          .replace(/^"|"$/g, '')
+        credentials = JSON.parse(cleanedJson)
+      }
+
+      // Validar que las credenciales tengan los campos necesarios
+      if (!credentials.client_email || !credentials.private_key) {
+        throw new Error('Las credenciales no contienen client_email o private_key')
+      }
+
+      visionClient = new ImageAnnotatorClient({
+        credentials,
+        projectId: config.GOOGLE_CLOUD_PROJECT_ID,
+      })
+      logger.info('Google Cloud Vision inicializado correctamente con credenciales desde variable de entorno')
+    } catch (parseError) {
+      visionClientError = `Error al parsear credenciales: ${parseError.message}`
+      logger.error(visionClientError)
+      visionClient = null
+    }
+  } else if (config.GOOGLE_CLOUD_PROJECT_ID) {
     // Intentar usar credenciales por defecto (gcloud auth application-default login)
+    logger.info('Inicializando Google Cloud Vision con credenciales por defecto')
     visionClient = new ImageAnnotatorClient({
       projectId: config.GOOGLE_CLOUD_PROJECT_ID,
     })
+    logger.info('Google Cloud Vision inicializado con credenciales por defecto')
+  } else {
+    visionClientError = 'No se encontraron credenciales de Google Cloud. Configure GOOGLE_CLOUD_KEY_FILE o GOOGLE_APPLICATION_CREDENTIALS'
+    logger.warn(visionClientError)
   }
 } catch (error) {
-  logger.warn('No se pudo inicializar Google Cloud Vision:', error.message)
+  visionClientError = `Error al inicializar Google Cloud Vision: ${error.message}`
+  logger.error(visionClientError, error)
   visionClient = null
 }
 
@@ -47,9 +82,10 @@ export const processInvoiceImage = async (req, res) => {
 
     // Verificar que Google Cloud Vision esté configurado
     if (!visionClient) {
-      logger.warn('Google Cloud Vision no está configurado.')
+      logger.error('Google Cloud Vision no está configurado.', { error: visionClientError })
       return res.status(503).json({
-        error: 'Servicio de OCR no disponible. Configure las credenciales de Google Cloud.',
+        error: visionClientError || 'Servicio de OCR no disponible. Configure las credenciales de Google Cloud.',
+        details: process.env.NODE_ENV === 'development' ? visionClientError : undefined,
       })
     }
 
@@ -149,9 +185,16 @@ export const processInvoiceImage = async (req, res) => {
     logger.error('Error al procesar imagen de factura:', error)
 
     // Manejar errores específicos de Google Cloud
-    if (error.code === 7 || error.message?.includes('PERMISSION_DENIED')) {
+    if (error.code === 16 || error.code === 7 || error.message?.includes('UNAUTHENTICATED') || error.message?.includes('PERMISSION_DENIED')) {
+      logger.error('Error de autenticación con Google Cloud Vision', {
+        code: error.code,
+        message: error.message,
+        hasCredentials: !!config.GOOGLE_CLOUD_KEY_FILE || !!config.GOOGLE_APPLICATION_CREDENTIALS,
+        hasProjectId: !!config.GOOGLE_CLOUD_PROJECT_ID,
+      })
       return res.status(503).json({
-        error: 'Error de autenticación con Google Cloud. Verifica las credenciales configuradas.',
+        error: 'Error de autenticación con Google Cloud. Verifica que las credenciales estén configuradas correctamente en Render.',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined,
       })
     }
 
