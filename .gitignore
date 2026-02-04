@@ -52,7 +52,5 @@ backend/node_modules/
 # Google Cloud Credentials
 google-credentials.json
 *-credentials.json
-*.json
-!package.json
-!package-lock.json
-!tsconfig.json
+*credentials*.json
+GOOGLE_CLOUD_ENV_EXAMPLE.txt
