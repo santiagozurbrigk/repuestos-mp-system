@@ -13,7 +13,10 @@ for (const varName of requiredVars) {
     console.error(`SUPABASE_URL=tu_supabase_url`)
     console.error(`SUPABASE_SERVICE_KEY=tu_supabase_service_key`)
     console.error(`PORT=3001`)
-    console.error(`CORS_ORIGIN=http://localhost:5173\n`)
+    console.error(`CORS_ORIGIN=http://localhost:5173`)
+    console.error(`GOOGLE_CLOUD_PROJECT_ID=tu_project_id (opcional, para Google Cloud Vision)`)
+    console.error(`GOOGLE_APPLICATION_CREDENTIALS=ruta/al/archivo-credentials.json (opcional, para Google Cloud Vision)`)
+    console.error(`GOOGLE_CLOUD_KEY_FILE=contenido_json_como_string (alternativa a GOOGLE_APPLICATION_CREDENTIALS)\n`)
     process.exit(1)
   }
 }
@@ -23,4 +26,7 @@ export default {
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY,
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  GOOGLE_CLOUD_PROJECT_ID: process.env.GOOGLE_CLOUD_PROJECT_ID,
+  GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS, // Path al archivo JSON de credenciales
+  GOOGLE_CLOUD_KEY_FILE: process.env.GOOGLE_CLOUD_KEY_FILE, // Contenido del JSON como string (alternativa)
 }

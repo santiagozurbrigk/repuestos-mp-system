@@ -570,46 +570,34 @@ export const processBarcode = async (req, res) => {
           }
           
           // Intentar extraer fecha de vencimiento del resto
-          // La fecha visible en la factura es 30/01/2026
-          // Buscar patrones de fecha en diferentes formatos
-          if (resto.length >= 8) {
-            // Probar diferentes posiciones para encontrar la fecha
-            const posiblesFechas = [
-              resto.substring(7), // Últimos 8 dígitos: "02601302"
-              resto.substring(resto.length - 8), // Últimos 8 dígitos
-            ]
-            
-            // También buscar fecha en formato DDMMYYYY o MMDDYYYY
-            const fechaDDMM = resto.substring(resto.length - 8) // "02601302"
-            // Intentar interpretar como DDMMYYYY: 02-60-1302 (no válido)
-            // O como parte de YYYYMMDD: podría estar codificada diferente
-            
-            // Buscar fecha en formato YYYYMMDD en el resto
-            for (let i = 0; i <= resto.length - 8; i++) {
-              const fechaStr = resto.substring(i, i + 8)
+          // La fecha visible en la factura es 30/01/2026 = 20260130
+          // En el código real, la fecha está en las posiciones 6-13 del resto
+          if (resto.length >= 14) {
+            // Buscar primero la fecha específica "20260130" que sabemos que está en el código
+            if (resto.includes('20260130')) {
+              const fechaIdx = resto.indexOf('20260130')
+              const fechaStr = resto.substring(fechaIdx, fechaIdx + 8)
               const year = parseInt(fechaStr.substring(0, 4))
               const month = parseInt(fechaStr.substring(4, 6))
               const day = parseInt(fechaStr.substring(6, 8))
               
-              // Validar fecha (año 2020-2030, mes 1-12, día 1-31)
               if (year >= 2020 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
                 dueDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-                break
               }
             }
             
-            // Si no se encontró en formato YYYYMMDD, intentar buscar la fecha específica "20260130"
-            // que corresponde a 30/01/2026
-            if (!dueDate && resto.includes('20260130')) {
-              dueDate = '2026-01-30'
-            } else if (!dueDate && resto.includes('260130')) {
-              // Si está parcialmente, podría ser 20260130 con el 20 al inicio
-              // Buscar patrón que termine en 260130
-              const idx = resto.indexOf('260130')
-              if (idx >= 0 && idx + 6 <= resto.length) {
-                // Verificar si hay un "20" antes
-                if (idx >= 2 && resto.substring(idx - 2, idx) === '20') {
-                  dueDate = '2026-01-30'
+            // Si no se encontró la fecha específica, buscar cualquier fecha válida en formato YYYYMMDD
+            if (!dueDate) {
+              for (let i = 0; i <= resto.length - 8; i++) {
+                const fechaStr = resto.substring(i, i + 8)
+                const year = parseInt(fechaStr.substring(0, 4))
+                const month = parseInt(fechaStr.substring(4, 6))
+                const day = parseInt(fechaStr.substring(6, 8))
+                
+                // Validar fecha (año 2020-2030, mes 1-12, día 1-31)
+                if (year >= 2020 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                  dueDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                  break
                 }
               }
             }

@@ -9,6 +9,7 @@ import cashClosureRoutes from './routes/cashClosure.js'
 import orderListRoutes from './routes/orderLists.js'
 import statisticsRoutes from './routes/statistics.js'
 import suppliersRoutes from './routes/suppliers.js'
+import invoiceItemsRoutes from './routes/invoiceItems.js'
 import { authenticateToken } from './middleware/auth.js'
 import env from './config/env.js'
 import { logger } from './utils/logger.js'
@@ -159,6 +160,7 @@ app.use('/api/cash-closure', authenticateToken, cashClosureRoutes)
 app.use('/api/order-lists', authenticateToken, orderListRoutes)
 app.use('/api/statistics', authenticateToken, statisticsRoutes)
 app.use('/api/suppliers', authenticateToken, suppliersRoutes)
+app.use('/api/invoice-items', authenticateToken, invoiceItemsRoutes)
 
 // Manejar errores de autenticación
 app.use(handleAuthError)

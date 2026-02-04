@@ -48,3 +48,11 @@ frontend/.vite/
 
 # Backend
 backend/node_modules/
+
+# Google Cloud Credentials
+google-credentials.json
+*-credentials.json
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json

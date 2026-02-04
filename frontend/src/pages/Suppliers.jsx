@@ -17,6 +17,9 @@ import {
   Mail,
   MapPin,
   Barcode,
+  Upload,
+  Image as ImageIcon,
+  Loader2,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -43,6 +46,11 @@ export default function Suppliers() {
   const [editingInvoice, setEditingInvoice] = useState(null)
   const [barcodeInput, setBarcodeInput] = useState('')
   const [scanning, setScanning] = useState(false)
+  const [showInvoiceImageModal, setShowInvoiceImageModal] = useState(false)
+  const [processingImage, setProcessingImage] = useState(false)
+  const [extractedData, setExtractedData] = useState(null)
+  const [invoiceItems, setInvoiceItems] = useState([])
+  const [selectedImage, setSelectedImage] = useState(null)
   const [supplierFormData, setSupplierFormData] = useState({
     name: '',
     contact_name: '',
@@ -137,6 +145,120 @@ export default function Suppliers() {
       e.preventDefault()
       handleBarcodeScan(barcodeInput)
     }
+  }
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validar tipo de archivo
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      error('Solo se permiten archivos de imagen (JPG, PNG) o PDF')
+      return
+    }
+
+    // Validar tamaño (10MB máximo)
+    if (file.size > 10 * 1024 * 1024) {
+      error('El archivo es demasiado grande. Máximo 10MB')
+      return
+    }
+
+    setSelectedImage(file)
+    setProcessingImage(true)
+
+    try {
+      const formData = new FormData()
+      formData.append('image', file)
+
+      const response = await api.post('/suppliers/process-invoice-image', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      })
+
+      if (response.data.success) {
+        const data = response.data.data
+
+        // Cargar proveedores si se creó uno nuevo
+        if (data.supplier_id) {
+          await fetchSuppliers()
+          const { data: updatedSuppliers } = await api.get('/suppliers?limit=1000')
+          const foundSupplier = updatedSuppliers.find((s) => s.id === data.supplier_id)
+          if (foundSupplier) {
+            setSelectedSupplier(foundSupplier)
+          }
+        }
+
+        // Prellenar formulario de factura
+        setInvoiceFormData({
+          supplier_id: data.supplier_id || '',
+          invoice_number: data.invoice_number || '',
+          invoice_date: data.invoice_date || getBuenosAiresDateString(),
+          due_date: data.due_date || '',
+          amount: data.amount > 0 ? data.amount.toString() : '',
+          paid_amount: '',
+          is_paid: false,
+          payment_date: '',
+          payment_method: 'cash',
+          observations: '',
+        })
+
+        // Guardar items extraídos
+        setInvoiceItems(data.items || [])
+        setExtractedData(data)
+
+        // Cerrar modal de imagen y abrir modal de factura
+        setShowInvoiceImageModal(false)
+        setShowInvoiceModal(true)
+        setSelectedImage(null)
+
+        success('Factura procesada correctamente. Revisa los datos antes de guardar.')
+      }
+    } catch (err) {
+      if (err.response?.status === 503) {
+        error('Servicio de OCR no disponible. Configura las credenciales de Google Cloud.')
+      } else if (err.response?.status === 400) {
+        error(err.response.data.error || 'No se pudo procesar la imagen. Asegúrate de que sea una factura clara.')
+      } else {
+        error('Error al procesar la imagen de la factura')
+      }
+    } finally {
+      setProcessingImage(false)
+    }
+  }
+
+  const handleAddInvoiceItem = () => {
+    setInvoiceItems([
+      ...invoiceItems,
+      {
+        item_name: '',
+        quantity: 1,
+        unit_price: 0,
+        total_price: 0,
+        description: '',
+      },
+    ])
+  }
+
+  const handleUpdateInvoiceItem = (index, field, value) => {
+    const updatedItems = [...invoiceItems]
+    updatedItems[index] = {
+      ...updatedItems[index],
+      [field]: value,
+    }
+
+    // Recalcular total_price si cambia quantity o unit_price
+    if (field === 'quantity' || field === 'unit_price') {
+      const quantity = parseFloat(updatedItems[index].quantity || 1)
+      const unitPrice = parseFloat(updatedItems[index].unit_price || 0)
+      updatedItems[index].total_price = quantity * unitPrice
+    }
+
+    setInvoiceItems(updatedItems)
+  }
+
+  const handleRemoveInvoiceItem = (index) => {
+    setInvoiceItems(invoiceItems.filter((_, i) => i !== index))
   }
 
   const fetchSuppliers = async () => {
@@ -245,12 +367,50 @@ export default function Suppliers() {
         data.observations = invoiceFormData.observations
       }
 
+      let invoiceId
       if (editingInvoice) {
-        await api.put(`/suppliers/invoices/${editingInvoice.id}`, data)
+        const response = await api.put(`/suppliers/invoices/${editingInvoice.id}`, data)
+        invoiceId = editingInvoice.id
         success('Factura actualizada correctamente')
       } else {
-        await api.post('/suppliers/invoices', data)
+        const response = await api.post('/suppliers/invoices', data)
+        invoiceId = response.data.id
         success('Factura creada correctamente')
+      }
+
+      // Guardar items de la factura si hay alguno
+      if (invoiceItems.length > 0 && invoiceId) {
+        try {
+          // Primero eliminar items existentes si estamos editando
+          if (editingInvoice) {
+            // Obtener items existentes y eliminarlos
+            const existingItems = await api.get(`/invoice-items/invoice/${invoiceId}`)
+            for (const item of existingItems.data) {
+              await api.delete(`/invoice-items/${item.id}`)
+            }
+          }
+
+          // Crear nuevos items
+          const itemsToSave = invoiceItems
+            .filter((item) => item.item_name && item.item_name.trim() !== '')
+            .map((item) => ({
+              item_name: item.item_name,
+              quantity: parseFloat(item.quantity || 1),
+              unit_price: parseFloat(item.unit_price || 0),
+              total_price: parseFloat(item.total_price || 0),
+              description: item.description || null,
+            }))
+
+          if (itemsToSave.length > 0) {
+            await api.post('/invoice-items/bulk', {
+              invoice_id: invoiceId,
+              items: itemsToSave,
+            })
+          }
+        } catch (err) {
+          console.warn('Error al guardar items de factura:', err)
+          // No mostrar error al usuario, la factura ya se guardó
+        }
       }
       setShowInvoiceModal(false)
       setEditingInvoice(null)
@@ -266,6 +426,8 @@ export default function Suppliers() {
         payment_method: 'cash',
         observations: '',
       })
+      setInvoiceItems([])
+      setExtractedData(null)
       setBarcodeInput('')
       await fetchSuppliers()
       if (selectedSupplier) {
@@ -290,7 +452,7 @@ export default function Suppliers() {
     setShowSupplierModal(true)
   }
 
-  const handleEditInvoice = (invoice) => {
+  const handleEditInvoice = async (invoice) => {
     setEditingInvoice(invoice)
     setInvoiceFormData({
       supplier_id: invoice.supplier_id,
@@ -304,6 +466,15 @@ export default function Suppliers() {
       payment_method: invoice.payment_method || 'cash',
       observations: invoice.observations || '',
     })
+
+    // Cargar items de la factura
+    try {
+      const itemsResponse = await api.get(`/invoice-items/invoice/${invoice.id}`)
+      setInvoiceItems(itemsResponse.data || [])
+    } catch (err) {
+      setInvoiceItems([])
+    }
+
     setShowInvoiceModal(true)
   }
 
@@ -424,35 +595,70 @@ export default function Suppliers() {
         </div>
       </div>
 
-      {/* Scanner de código de barras */}
+      {/* Scanner de código de barras y escaneo completo */}
       {!showInvoiceModal && (
         <div className="bg-white shadow-soft rounded-xl border border-gray-100 p-6 mb-8">
-          <div className="flex items-center space-x-4">
-            <div className="flex-shrink-0">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
-                <Barcode className="w-6 h-6 text-white" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Escaneo de código de barras */}
+            <div className="flex items-center space-x-4">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
+                  <Barcode className="w-6 h-6 text-white" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Escanear Código de Barras
+                </label>
+                <input
+                  type="text"
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onKeyDown={handleBarcodeInputKeyDown}
+                  placeholder="Escanea código de barras y presiona Enter"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-lg"
+                  disabled={scanning}
+                  autoFocus
+                />
+                {scanning && (
+                  <p className="mt-2 text-sm text-blue-600">Procesando código de barras...</p>
+                )}
               </div>
             </div>
-            <div className="flex-1">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Escanear Código de Barras de Factura
-              </label>
-              <input
-                type="text"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                onKeyDown={handleBarcodeInputKeyDown}
-                placeholder="Escanea o ingresa el código de barras y presiona Enter"
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-lg"
-                disabled={scanning}
-                autoFocus
-              />
-              {scanning && (
-                <p className="mt-2 text-sm text-blue-600">Procesando código de barras...</p>
-              )}
-              <p className="mt-2 text-xs text-gray-500">
-                Si el proveedor no existe, se creará automáticamente. La factura se cargará con los datos extraídos.
-              </p>
+
+            {/* Escaneo completo de factura */}
+            <div className="flex items-center space-x-4">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
+                  <ImageIcon className="w-6 h-6 text-white" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Escanear Factura Completa
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowInvoiceImageModal(true)}
+                  disabled={processingImage}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-medium rounded-xl shadow-sm transition-all duration-200 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {processingImage ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Procesando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-5 h-5" />
+                      <span>Subir Imagen de Factura</span>
+                    </>
+                  )}
+                </button>
+                <p className="mt-2 text-xs text-gray-500">
+                  Extrae automáticamente proveedor, datos y productos de la factura
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -998,6 +1204,104 @@ export default function Suppliers() {
                     </div>
                   </>
                 )}
+                {/* Sección de Productos/Items */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">Productos de la Factura</label>
+                    <button
+                      type="button"
+                      onClick={handleAddInvoiceItem}
+                      className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center space-x-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Agregar Producto</span>
+                    </button>
+                  </div>
+                  {invoiceItems.length === 0 ? (
+                    <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+                      <FileText className="mx-auto h-8 w-8 text-gray-400" />
+                      <p className="mt-2 text-sm text-gray-500">No hay productos agregados</p>
+                      <p className="text-xs text-gray-400 mt-1">Haz clic en "Agregar Producto" para comenzar</p>
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Producto</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-24">Cantidad</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Precio Unit.</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Total</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-16"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {invoiceItems.map((item, index) => (
+                              <tr key={index}>
+                                <td className="px-3 py-2">
+                                  <input
+                                    type="text"
+                                    value={item.item_name || ''}
+                                    onChange={(e) => handleUpdateInvoiceItem(index, 'item_name', e.target.value)}
+                                    placeholder="Nombre del producto"
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                  />
+                                </td>
+                                <td className="px-3 py-2">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={item.quantity || 1}
+                                    onChange={(e) => handleUpdateInvoiceItem(index, 'quantity', parseFloat(e.target.value) || 1)}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                  />
+                                </td>
+                                <td className="px-3 py-2">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={item.unit_price || 0}
+                                    onChange={(e) => handleUpdateInvoiceItem(index, 'unit_price', parseFloat(e.target.value) || 0)}
+                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                  />
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span className="text-sm font-medium text-gray-900">
+                                    ${(item.total_price || 0).toFixed(2)}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveInvoiceItem(index)}
+                                    className="text-red-600 hover:text-red-700 p-1"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-gray-50">
+                            <tr>
+                              <td colSpan="3" className="px-3 py-2 text-right text-sm font-semibold text-gray-700">
+                                Total de Productos:
+                              </td>
+                              <td className="px-3 py-2 text-sm font-bold text-gray-900">
+                                ${invoiceItems.reduce((sum, item) => sum + (parseFloat(item.total_price) || 0), 0).toFixed(2)}
+                              </td>
+                              <td></td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones</label>
                   <textarea
@@ -1029,6 +1333,104 @@ export default function Suppliers() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para subir imagen de factura */}
+      {showInvoiceImageModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">Escanear Factura Completa</h2>
+            </div>
+            <div className="px-6 py-6">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Selecciona una imagen de la factura
+                </label>
+                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary-400 transition-colors">
+                  <div className="space-y-1 text-center">
+                    {selectedImage ? (
+                      <div className="space-y-2">
+                        <ImageIcon className="mx-auto h-12 w-12 text-green-500" />
+                        <div className="text-sm text-gray-600">
+                          <p className="font-medium">{selectedImage.name}</p>
+                          <p className="text-xs text-gray-500">
+                            {(selectedImage.size / 1024 / 1024).toFixed(2)} MB
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedImage(null)}
+                          className="text-xs text-red-600 hover:text-red-700"
+                        >
+                          Cambiar archivo
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                        <div className="flex text-sm text-gray-600">
+                          <label
+                            htmlFor="invoice-image-upload"
+                            className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary-500"
+                          >
+                            <span>Sube un archivo</span>
+                            <input
+                              id="invoice-image-upload"
+                              name="invoice-image-upload"
+                              type="file"
+                              accept="image/*,application/pdf"
+                              className="sr-only"
+                              onChange={handleImageUpload}
+                              disabled={processingImage}
+                            />
+                          </label>
+                          <p className="pl-1">o arrastra y suelta</p>
+                        </div>
+                        <p className="text-xs text-gray-500">PNG, JPG, PDF hasta 10MB</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {processingImage && (
+                <div className="flex items-center justify-center space-x-2 text-blue-600 py-4">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="text-sm">Procesando factura con OCR...</span>
+                </div>
+              )}
+
+              {selectedImage && !processingImage && (
+                <div className="flex justify-end space-x-3 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInvoiceImageModal(false)
+                      setSelectedImage(null)
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancelar
+                  </button>
+                  <label
+                    htmlFor="invoice-image-upload-retry"
+                    className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-green-600 to-green-700 rounded-lg hover:from-green-700 hover:to-green-800 cursor-pointer"
+                  >
+                    Procesar Factura
+                    <input
+                      id="invoice-image-upload-retry"
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="sr-only"
+                      onChange={handleImageUpload}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
