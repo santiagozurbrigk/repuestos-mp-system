@@ -87,6 +87,7 @@ export const getTodaySalesSummary = async (req, res) => {
     let totalCash = 0
     let totalDebit = 0
     let totalCredit = 0
+    let totalTransfer = 0
     let totalExpenses = 0
     let totalFreight = 0
 
@@ -107,6 +108,9 @@ export const getTodaySalesSummary = async (req, res) => {
           break
         case 'credit':
           totalCredit += amount
+          break
+        case 'transfer':
+          totalTransfer += amount
           break
         case 'expenses':
           totalExpenses += amount
@@ -130,6 +134,7 @@ export const getTodaySalesSummary = async (req, res) => {
       total_cash: totalCash,
       total_debit: totalDebit,
       total_credit: totalCredit,
+      total_transfer: totalTransfer,
       total_expenses: totalExpenses,
       total_freight: totalFreight,
       sales_count: salesToInclude.length,
@@ -231,6 +236,7 @@ export const createCashClosure = async (req, res) => {
     let totalCash = 0
     let totalDebit = 0
     let totalCredit = 0
+    let totalTransfer = 0
     let totalExpenses = 0
     let totalFreight = 0
 
@@ -251,6 +257,9 @@ export const createCashClosure = async (req, res) => {
           break
         case 'credit':
           totalCredit += amount
+          break
+        case 'transfer':
+          totalTransfer += amount
           break
         case 'expenses':
           totalExpenses += amount
@@ -275,6 +284,7 @@ export const createCashClosure = async (req, res) => {
       total_cash: totalCash,
       total_debit: totalDebit,
       total_credit: totalCredit,
+      total_transfer: totalTransfer,
       total_expenses: totalExpenses,
       total_freight: totalFreight,
       sales_count: salesForDate.length,

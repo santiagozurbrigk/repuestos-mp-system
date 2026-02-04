@@ -168,7 +168,7 @@ export default function CashClosure() {
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
                 <div className="text-xs font-medium text-blue-700 mb-1">Efectivo</div>
                 <div className="text-xl font-bold text-blue-900">
@@ -185,6 +185,12 @@ export default function CashClosure() {
                 <div className="text-xs font-medium text-purple-700 mb-1">Crédito</div>
                 <div className="text-xl font-bold text-purple-900">
                   ${parseFloat(todaySummary.total_credit || 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="bg-teal-50 p-4 rounded-xl border border-teal-200">
+                <div className="text-xs font-medium text-teal-700 mb-1">Transferencia</div>
+                <div className="text-xl font-bold text-teal-900">
+                  ${parseFloat(todaySummary.total_transfer || 0).toFixed(2)}
                 </div>
               </div>
               <div className="bg-red-50 p-4 rounded-xl border border-red-200">
@@ -282,7 +288,7 @@ export default function CashClosure() {
                         </span>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-7 gap-3 text-sm mb-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 text-sm mb-3">
                       <div className="bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
                         <span className="text-blue-700 text-xs block mb-1">Efectivo</span>
                         <span className="font-bold text-blue-900">
@@ -299,6 +305,12 @@ export default function CashClosure() {
                         <span className="text-purple-700 text-xs block mb-1">Crédito</span>
                         <span className="font-bold text-purple-900">
                           ${parseFloat(closure.total_credit || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="bg-teal-50 rounded-lg px-3 py-2 border border-teal-200">
+                        <span className="text-teal-700 text-xs block mb-1">Transferencia</span>
+                        <span className="font-bold text-teal-900">
+                          ${parseFloat(closure.total_transfer || 0).toFixed(2)}
                         </span>
                       </div>
                       <div className="bg-red-50 rounded-lg px-3 py-2 border border-red-200">

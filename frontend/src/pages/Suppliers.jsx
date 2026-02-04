@@ -44,8 +44,6 @@ export default function Suppliers() {
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState(null)
   const [editingInvoice, setEditingInvoice] = useState(null)
-  const [barcodeInput, setBarcodeInput] = useState('')
-  const [scanning, setScanning] = useState(false)
   const [showInvoiceImageModal, setShowInvoiceImageModal] = useState(false)
   const [processingImage, setProcessingImage] = useState(false)
   const [extractedData, setExtractedData] = useState(null)
@@ -83,69 +81,6 @@ export default function Suppliers() {
     }
   }, [selectedSupplier])
 
-  const handleBarcodeScan = async (barcode) => {
-    if (!barcode || barcode.trim() === '') return
-
-    setScanning(true)
-    try {
-      // Procesar el código de barras
-      const response = await api.post('/suppliers/process-barcode', {
-        barcode: barcode.trim(),
-        supplier_name: null, // Se puede extraer del código o pedir al usuario
-      })
-
-      if (response.data.success) {
-        const decodedData = response.data.data
-
-        // Si se creó o encontró un proveedor, recargar la lista y seleccionarlo
-        if (decodedData.supplier_id) {
-          await fetchSuppliers()
-          // Seleccionar el proveedor creado/encontrado
-          const { data: updatedSuppliers } = await api.get('/suppliers?limit=1000')
-          const foundSupplier = updatedSuppliers.find((s) => s.id === decodedData.supplier_id)
-          if (foundSupplier) {
-            setSelectedSupplier(foundSupplier)
-            // Cargar facturas y resumen del proveedor
-            await fetchInvoices(foundSupplier.id)
-            await fetchSupplierSummary(foundSupplier.id)
-          }
-        }
-
-        // Cargar los datos en el formulario de factura
-        setInvoiceFormData({
-          supplier_id: decodedData.supplier_id || '',
-          invoice_number: decodedData.invoice_number || barcode.trim(),
-          invoice_date: decodedData.invoice_date || getBuenosAiresDateString(),
-          due_date: decodedData.due_date || '',
-          amount: decodedData.amount > 0 ? decodedData.amount.toString() : '',
-          paid_amount: '',
-          is_paid: false,
-          payment_date: '',
-          payment_method: 'cash',
-          observations: decodedData.cuit ? `CUIT: ${decodedData.cuit}` : '',
-        })
-        setShowInvoiceModal(true)
-        setBarcodeInput('')
-        success(response.data.message || 'Código de barras procesado. Completa los datos de la factura.')
-      }
-    } catch (err) {
-      if (err.response?.status === 400 && err.response?.data?.existing) {
-        error('Ya existe una factura con este código de barras')
-        setBarcodeInput('')
-      } else {
-        error('Error al procesar el código de barras')
-      }
-    } finally {
-      setScanning(false)
-    }
-  }
-
-  const handleBarcodeInputKeyDown = (e) => {
-    if (e.key === 'Enter' && barcodeInput.trim() !== '') {
-      e.preventDefault()
-      handleBarcodeScan(barcodeInput)
-    }
-  }
 
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0]
@@ -428,7 +363,6 @@ export default function Suppliers() {
       })
       setInvoiceItems([])
       setExtractedData(null)
-      setBarcodeInput('')
       await fetchSuppliers()
       if (selectedSupplier) {
         await fetchInvoices(selectedSupplier.id)
@@ -598,67 +532,37 @@ export default function Suppliers() {
       {/* Scanner de código de barras y escaneo completo */}
       {!showInvoiceModal && (
         <div className="bg-white shadow-soft rounded-xl border border-gray-100 p-6 mb-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Escaneo de código de barras */}
-            <div className="flex items-center space-x-4">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
-                  <Barcode className="w-6 h-6 text-white" />
-                </div>
-              </div>
-              <div className="flex-1">
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Escanear Código de Barras
-                </label>
-                <input
-                  type="text"
-                  value={barcodeInput}
-                  onChange={(e) => setBarcodeInput(e.target.value)}
-                  onKeyDown={handleBarcodeInputKeyDown}
-                  placeholder="Escanea código de barras y presiona Enter"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-lg"
-                  disabled={scanning}
-                  autoFocus
-                />
-                {scanning && (
-                  <p className="mt-2 text-sm text-blue-600">Procesando código de barras...</p>
-                )}
+          <div className="flex items-center space-x-4">
+            <div className="flex-shrink-0">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
+                <ImageIcon className="w-6 h-6 text-white" />
               </div>
             </div>
-
-            {/* Escaneo completo de factura */}
-            <div className="flex items-center space-x-4">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center">
-                  <ImageIcon className="w-6 h-6 text-white" />
-                </div>
-              </div>
-              <div className="flex-1">
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Escanear Factura Completa
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowInvoiceImageModal(true)}
-                  disabled={processingImage}
-                  className="w-full px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-medium rounded-xl shadow-sm transition-all duration-200 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {processingImage ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Procesando...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-5 h-5" />
-                      <span>Subir Imagen de Factura</span>
-                    </>
-                  )}
-                </button>
-                <p className="mt-2 text-xs text-gray-500">
-                  Extrae automáticamente proveedor, datos y productos de la factura
-                </p>
-              </div>
+            <div className="flex-1">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Escanear Factura Completa
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowInvoiceImageModal(true)}
+                disabled={processingImage}
+                className="w-full px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-medium rounded-xl shadow-sm transition-all duration-200 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {processingImage ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Procesando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-5 h-5" />
+                    <span>Subir Imagen de Factura</span>
+                  </>
+                )}
+              </button>
+              <p className="mt-2 text-xs text-gray-500">
+                Extrae automáticamente proveedor, datos y productos de la factura
+              </p>
             </div>
           </div>
         </div>
