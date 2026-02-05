@@ -21,34 +21,137 @@ try {
   } else if (config.GOOGLE_CLOUD_KEY_FILE) {
     // Si el JSON está como string en la variable de entorno
     logger.info('Inicializando Google Cloud Vision con credenciales desde variable de entorno')
+    logger.info(`Project ID: ${config.GOOGLE_CLOUD_PROJECT_ID || 'NO CONFIGURADO'}`)
+    logger.info(`GOOGLE_CLOUD_KEY_FILE length: ${config.GOOGLE_CLOUD_KEY_FILE?.length || 0} caracteres`)
     
     try {
-      // Intentar parsear el JSON
+      // Limpiar y normalizar el JSON
+      let jsonString = config.GOOGLE_CLOUD_KEY_FILE.trim()
+      
+      // Si el JSON viene con saltos de línea reales (multilínea desde Render), convertirlo a una sola línea
+      // Primero, preservar los \n dentro de los valores de strings (como private_key)
+      // Luego eliminar saltos de línea reales fuera de los strings
+      
+      // Intentar parsear directamente primero
       let credentials
+      let parseAttempt = 1
+      
       try {
-        credentials = JSON.parse(config.GOOGLE_CLOUD_KEY_FILE)
-      } catch (parseError) {
-        // Si falla, intentar con escape de caracteres
-        const cleanedJson = config.GOOGLE_CLOUD_KEY_FILE
-          .replace(/\\n/g, '\n')
-          .replace(/\\"/g, '"')
-          .replace(/^"|"$/g, '')
-        credentials = JSON.parse(cleanedJson)
+        // Intento 1: Parsear directamente
+        credentials = JSON.parse(jsonString)
+        logger.info('JSON parseado correctamente en primer intento')
+      } catch (firstError) {
+        logger.warn(`Error en primer intento de parseo: ${firstError.message}`)
+        
+        try {
+          // Intento 2: Eliminar saltos de línea reales y espacios extra, pero preservar \n dentro de strings
+          // Convertir saltos de línea reales a espacios, excepto dentro de comillas
+          let cleanedJson = ''
+          let insideString = false
+          let escapeNext = false
+          
+          for (let i = 0; i < jsonString.length; i++) {
+            const char = jsonString[i]
+            
+            if (escapeNext) {
+              cleanedJson += char
+              escapeNext = false
+              continue
+            }
+            
+            if (char === '\\') {
+              escapeNext = true
+              cleanedJson += char
+              continue
+            }
+            
+            if (char === '"' && !escapeNext) {
+              insideString = !insideString
+              cleanedJson += char
+              continue
+            }
+            
+            if (char === '\n' || char === '\r') {
+              // Si estamos dentro de un string, mantener el salto de línea como \n
+              if (insideString) {
+                cleanedJson += '\\n'
+              } else {
+                // Si estamos fuera de un string, eliminar el salto de línea
+                cleanedJson += ' '
+              }
+            } else if (char === ' ' && !insideString) {
+              // Normalizar espacios múltiples fuera de strings
+              if (cleanedJson[cleanedJson.length - 1] !== ' ') {
+                cleanedJson += char
+              }
+            } else {
+              cleanedJson += char
+            }
+          }
+          
+          credentials = JSON.parse(cleanedJson.trim())
+          logger.info('JSON parseado correctamente después de limpiar saltos de línea')
+        } catch (secondError) {
+          logger.error(`Error en segundo intento de parseo: ${secondError.message}`)
+          
+          // Intento 3: Usar una estrategia más simple - eliminar todos los saltos de línea y espacios extra
+          try {
+            const minifiedJson = jsonString
+              .replace(/\r\n/g, ' ')
+              .replace(/\n/g, ' ')
+              .replace(/\r/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+            
+            credentials = JSON.parse(minifiedJson)
+            logger.info('JSON parseado después de minificar completamente')
+          } catch (thirdError) {
+            throw new Error(`No se pudo parsear el JSON después de 3 intentos. Último error: ${thirdError.message}. Primeros 200 caracteres: ${jsonString.substring(0, 200)}`)
+          }
+        }
       }
 
       // Validar que las credenciales tengan los campos necesarios
-      if (!credentials.client_email || !credentials.private_key) {
-        throw new Error('Las credenciales no contienen client_email o private_key')
+      if (!credentials.client_email) {
+        throw new Error('Las credenciales no contienen client_email')
       }
+      
+      if (!credentials.private_key) {
+        throw new Error('Las credenciales no contienen private_key')
+      }
+      
+      // Validar que private_key tenga el formato correcto
+      if (!credentials.private_key.includes('BEGIN PRIVATE KEY')) {
+        logger.warn('El private_key no parece tener el formato PEM correcto')
+      }
+      
+      logger.info(`Credenciales válidas para: ${credentials.client_email}`)
+      
+      // Usar el project_id del JSON si está disponible, o el de la variable de entorno
+      const projectId = credentials.project_id || config.GOOGLE_CLOUD_PROJECT_ID
+      
+      if (!projectId) {
+        throw new Error('No se encontró project_id en las credenciales ni en GOOGLE_CLOUD_PROJECT_ID')
+      }
+      
+      // Verificar que el project_id coincida si ambos están configurados
+      if (credentials.project_id && config.GOOGLE_CLOUD_PROJECT_ID && credentials.project_id !== config.GOOGLE_CLOUD_PROJECT_ID) {
+        logger.warn(`Advertencia: project_id en credenciales (${credentials.project_id}) no coincide con GOOGLE_CLOUD_PROJECT_ID (${config.GOOGLE_CLOUD_PROJECT_ID}). Usando el de las credenciales.`)
+      }
+      
+      logger.info(`Usando Project ID: ${projectId}`)
 
       visionClient = new ImageAnnotatorClient({
         credentials,
-        projectId: config.GOOGLE_CLOUD_PROJECT_ID,
+        projectId: projectId,
       })
       logger.info('Google Cloud Vision inicializado correctamente con credenciales desde variable de entorno')
     } catch (parseError) {
       visionClientError = `Error al parsear credenciales: ${parseError.message}`
-      logger.error(visionClientError)
+      logger.error(visionClientError, {
+        error: parseError,
+        jsonPreview: config.GOOGLE_CLOUD_KEY_FILE?.substring(0, 200),
+      })
       visionClient = null
     }
   } else if (config.GOOGLE_CLOUD_PROJECT_ID) {
