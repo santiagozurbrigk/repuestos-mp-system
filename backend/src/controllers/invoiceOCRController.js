@@ -236,13 +236,25 @@ export const processInvoiceImage = async (req, res) => {
     const fullTextAnnotation = result.fullTextAnnotation
 
     if (!fullTextAnnotation || !fullTextAnnotation.text) {
-      logger.warn('No se encontró texto en la imagen')
+      logger.warn('No se encontró texto en la imagen', {
+        hasAnnotation: !!fullTextAnnotation,
+        hasText: !!fullTextAnnotation?.text,
+        fileSize: imageBuffer.length,
+        fileType: req.file.mimetype,
+      })
       return res.status(400).json({
-        error: 'No se pudo extraer texto de la imagen. Asegúrate de que sea una factura clara y legible.',
+        error: 'No se pudo extraer texto de la imagen. Asegúrate de que sea una factura clara y legible. Si el problema persiste, intenta con una imagen de mayor resolución.',
       })
     }
-
+    
+    // Verificar que el texto extraído tenga suficiente contenido
     const extractedText = fullTextAnnotation.text
+    if (extractedText.length < 50) {
+      logger.warn('Texto extraído muy corto', { length: extractedText.length, preview: extractedText.substring(0, 100) })
+      return res.status(400).json({
+        error: 'El texto extraído de la imagen es muy corto. Asegúrate de que la imagen sea clara y contenga texto legible.',
+      })
+    }
 
     // Parsear el texto extraído para encontrar datos de la factura
     const parsedData = parseInvoiceText(extractedText)
@@ -375,7 +387,7 @@ function parseInvoiceText(text) {
   // 1. Buscar nombre del proveedor (generalmente en las primeras líneas)
   // Buscar patrones comunes: "RAZÓN SOCIAL", nombre de empresa en mayúsculas, etc.
   const vendorKeywords = ['razón social', 'razon social', 'proveedor', 'vendedor', 'empresa']
-  const excludeVendorWords = ['sucursal', 'domicilio', 'localidad', 'tel:', 'email', 'www.', 'http', 'dirección', 'direccion']
+  const excludeVendorWords = ['sucursal', 'domicilio', 'localidad', 'tel:', 'email', 'www.', 'http', 'dirección', 'direccion', 'alquimac', 'mar del plata', 'buenos aires']
   
   for (let i = 0; i < Math.min(20, lines.length); i++) {
     const line = lines[i]
@@ -427,8 +439,10 @@ function parseInvoiceText(text) {
     }
   }
   
-  // Si encontramos un nombre pero contiene "SUCURSAL", buscar uno mejor antes
-  if (result.vendorName && result.vendorName.toLowerCase().includes('sucursal')) {
+  // Si encontramos un nombre pero contiene palabras excluidas, buscar uno mejor antes
+  if (result.vendorName && (result.vendorName.toLowerCase().includes('sucursal') || 
+                            result.vendorName.toLowerCase().includes('alquimac') ||
+                            result.vendorName.toLowerCase().includes('mar del plata'))) {
     for (let i = 0; i < Math.min(20, lines.length); i++) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
@@ -658,40 +672,104 @@ function parseInvoiceText(text) {
   
   if (productTableStart === -1) {
     logger.warn('No se encontró encabezado claro de tabla de productos, buscando productos en todas las líneas')
+    // Intentar buscar encabezados alternativos más flexibles
+    for (let i = 0; i < Math.min(30, lines.length); i++) {
+      const lineLower = lines[i].toLowerCase()
+      // Buscar líneas que contengan al menos una palabra clave de productos
+      const keywordCount = productTableKeywords.filter(kw => lineLower.includes(kw)).length
+      if (keywordCount >= 1 && (lineLower.includes('marca') || lineLower.includes('codigo') || lineLower.includes('articulo'))) {
+        productTableStart = i + 1
+        logger.info(`Tabla de productos encontrada (método alternativo) en línea ${i}: ${lines[i]}`)
+        break
+      }
+    }
   }
 
-  // Si no encontramos encabezado claro, buscar líneas que parezcan productos
+  // Si no encontramos encabezado claro, buscar líneas que parezcan productos en toda la factura
   if (productTableStart === -1) {
+    logger.info('Buscando productos sin encabezado claro, analizando todas las líneas')
+    
     // Buscar líneas con formato de tabla: texto + números (cantidad/precio)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
       
+      // Detener si encontramos totales o resúmenes
+      if (lineLower.includes('subtotal') || 
+          (lineLower.includes('total') && (lineLower.includes('iva') || lineLower.includes('pibbb')))) {
+        break
+      }
+      
       // Verificar que no sea un encabezado/metadato
       const isExcluded = excludeKeywords.some(kw => lineLower.includes(kw))
       if (isExcluded) continue
       
-      // Buscar líneas que tengan formato de producto: texto descriptivo + números
-      // Patrón: texto (marca/código/producto) + cantidad + precio unitario + total
-      const productPattern = /^([A-ZÁÉÍÓÚÑ\s]{2,})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
-      const match = line.match(productPattern)
+      // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL (más flexible)
+      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,25})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,50})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match1 = line.match(tablePattern1)
       
-      if (match) {
-        const [, description, quantity, unitPriceStr, totalPriceStr] = match
+      if (match1) {
+        const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = match1
+        
+        const qty = parseFloat(cantidad) || 1
+        const unitPrice = parseFloat(precioUnitStr.replace(/\./g, '').replace(',', '.')) || 0
+        const totalPrice = parseFloat(totalStr.replace(/\./g, '').replace(',', '.')) || 0
+        
+        if (unitPrice > 0 && unitPrice < 10000000 && descripcion.trim().length > 3) {
+          result.items.push({
+            item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
+            quantity: qty,
+            unit_price: unitPrice,
+            total_price: totalPrice || (qty * unitPrice),
+            description: `Código: ${codigo}`,
+          })
+          continue
+        }
+      }
+      
+      // Patrón 2: DESCRIPCION CANT PRECIO TOTAL (sin marca/código)
+      const tablePattern2 = /^([A-ZÁÉÍÓÚÑ\s\.\-]{5,50})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match2 = line.match(tablePattern2)
+      
+      if (match2) {
+        const [, descripcion, cantidad, precioUnitStr, totalStr] = match2
         
         // Verificar que la descripción no sea solo números o fechas
-        if (!/^\d+$/.test(description.trim()) && !/^\d{2}\/\d{2}\/\d{4}/.test(description.trim())) {
-          const qty = parseFloat(quantity) || 1
-          const unitPrice = parseFloat(unitPriceStr.replace(/\./g, '').replace(',', '.')) || 0
-          const totalPrice = parseFloat(totalPriceStr.replace(/\./g, '').replace(',', '.')) || 0
+        if (!/^\d+$/.test(descripcion.trim()) && !/^\d{2}\/\d{2}\/\d{4}/.test(descripcion.trim())) {
+          const qty = parseFloat(cantidad) || 1
+          const unitPrice = parseFloat(precioUnitStr.replace(/\./g, '').replace(',', '.')) || 0
+          const totalPrice = parseFloat(totalStr.replace(/\./g, '').replace(',', '.')) || 0
           
-          // Validar que los precios sean razonables
           if (unitPrice > 0 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
             result.items.push({
-              item_name: description.trim(),
+              item_name: descripcion.trim(),
               quantity: qty,
               unit_price: unitPrice,
               total_price: totalPrice || (qty * unitPrice),
+              description: null,
+            })
+            continue
+          }
+        }
+      }
+      
+      // Patrón 3: Solo descripción y precio (más flexible)
+      const simplePattern = /^([A-ZÁÉÍÓÚÑ\s\.\-]{5,50})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match3 = line.match(simplePattern)
+      
+      if (match3 && !match1 && !match2) {
+        const [, descripcion, precioStr] = match3
+        
+        // Verificar que no sea un campo de encabezado
+        if (!excludeKeywords.some(kw => descripcion.toLowerCase().includes(kw))) {
+          const unitPrice = parseFloat(precioStr.replace(/\./g, '').replace(',', '.')) || 0
+          
+          if (unitPrice > 100 && unitPrice < 10000000 && descripcion.trim().length > 5) {
+            result.items.push({
+              item_name: descripcion.trim(),
+              quantity: 1,
+              unit_price: unitPrice,
+              total_price: unitPrice,
               description: null,
             })
           }
