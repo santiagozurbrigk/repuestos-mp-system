@@ -364,21 +364,43 @@ function parseInvoiceText(text) {
   const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
 
   // 1. Buscar nombre del proveedor (generalmente en las primeras líneas)
-  // Buscar patrones comunes: "RAZÓN SOCIAL", "PROVEEDOR", o simplemente texto en mayúsculas al inicio
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
+  // Buscar patrones comunes: "RAZÓN SOCIAL", nombre de empresa en mayúsculas, etc.
+  const vendorKeywords = ['razón social', 'razon social', 'proveedor', 'vendedor', 'empresa']
+  
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
     const line = lines[i]
-    // Si la línea tiene más de 5 caracteres y no parece ser un número o fecha
+    const lineLower = line.toLowerCase()
+    
+    // Buscar línea que contenga palabras clave de proveedor
+    if (vendorKeywords.some(kw => lineLower.includes(kw))) {
+      // La siguiente línea o la misma línea puede contener el nombre
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1]
+        if (nextLine.length > 5 && /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(nextLine.trim())) {
+          result.vendorName = nextLine.trim()
+          break
+        }
+      }
+    }
+    
+    // Buscar líneas en mayúsculas que parezcan nombres de empresa (no fechas, no números)
     if (
-      line.length > 5 &&
+      line.length > 8 &&
+      line.length < 100 &&
+      /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim()) &&
       !/^\d+/.test(line) &&
       !/^\d{2}\/\d{2}\/\d{4}/.test(line) &&
-      !line.toLowerCase().includes('factura') &&
-      !line.toLowerCase().includes('cuit') &&
-      !line.toLowerCase().includes('fecha')
+      !lineLower.includes('factura') &&
+      !lineLower.includes('cuit') &&
+      !lineLower.includes('fecha') &&
+      !lineLower.includes('domicilio') &&
+      !lineLower.includes('tel:') &&
+      !lineLower.includes('email') &&
+      !lineLower.includes('www.')
     ) {
       // Podría ser el nombre del proveedor
-      if (!result.vendorName || line.length > result.vendorName.length) {
-        result.vendorName = line
+      if (!result.vendorName || (line.length > result.vendorName.length && line.length < 80)) {
+        result.vendorName = line.trim()
       }
     }
   }
@@ -400,55 +422,112 @@ function parseInvoiceText(text) {
   }
 
   // 3. Buscar fechas
-  // Patrones: DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY
+  // Buscar específicamente "Fecha Emisión" y "Fecha de Vto" o "Vencimiento"
   const datePatterns = [
     /(\d{2}\/\d{2}\/\d{4})/g, // DD/MM/YYYY
     /(\d{4}-\d{2}-\d{2})/g, // YYYY-MM-DD
     /(\d{2}-\d{2}-\d{4})/g, // DD-MM-YYYY
   ]
 
-  const dates = []
-  for (const pattern of datePatterns) {
-    const matches = normalizedText.match(pattern)
-    if (matches) {
-      dates.push(...matches)
+  // Buscar fecha de emisión
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const lineLower = line.toLowerCase()
+    
+    if (lineLower.includes('fecha') && (lineLower.includes('emisión') || lineLower.includes('emision'))) {
+      const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/)
+      if (dateMatch) {
+        result.invoiceDate = parseDate(dateMatch[1])
+        break
+      }
     }
   }
 
-  // Parsear fechas encontradas
-  if (dates.length > 0) {
-    // La primera fecha suele ser la fecha de emisión
-    result.invoiceDate = parseDate(dates[0])
-    // La segunda fecha (si existe) puede ser la de vencimiento
-    if (dates.length > 1) {
-      result.dueDate = parseDate(dates[1])
+  // Buscar fecha de vencimiento
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const lineLower = line.toLowerCase()
+    
+    if (lineLower.includes('vencimiento') || lineLower.includes('vto') || 
+        (lineLower.includes('fecha') && lineLower.includes('vto'))) {
+      const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/)
+      if (dateMatch) {
+        result.dueDate = parseDate(dateMatch[1])
+        break
+      }
+    }
+  }
+
+  // Si no se encontraron fechas específicas, buscar todas las fechas y usar la primera como emisión
+  if (!result.invoiceDate || !result.dueDate) {
+    const dates = []
+    for (const pattern of datePatterns) {
+      const matches = normalizedText.match(pattern)
+      if (matches) {
+        dates.push(...matches)
+      }
+    }
+
+    // Eliminar duplicados
+    const uniqueDates = [...new Set(dates)]
+
+    if (uniqueDates.length > 0 && !result.invoiceDate) {
+      result.invoiceDate = parseDate(uniqueDates[0])
+    }
+    
+    if (uniqueDates.length > 1 && !result.dueDate) {
+      result.dueDate = parseDate(uniqueDates[1])
     }
   }
 
   // 4. Buscar importe total
-  // Patrones: "TOTAL", "TOTAL A PAGAR", "$", "ARS", números grandes con decimales
+  // Buscar líneas que contengan "TOTAL" seguido de un número grande
   const totalPatterns = [
-    /(?:total|total\s+a\s+pagar|importe\s+total)[\s:]*\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/i,
-    /\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/, // $50.000,00
-    /(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:ars|pesos)/i,
+    /(?:^|\s)(?:total|total\s+a\s+pagar|importe\s+total)[\s:]*\$?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/i,
+    /(?:^|\s)\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:ars|pesos|total)/i,
   ]
 
-  for (const pattern of totalPatterns) {
-    const match = normalizedText.match(pattern)
-    if (match) {
-      const amountStr = match[1].replace(/\./g, '').replace(',', '.')
-      result.totalAmount = parseFloat(amountStr) || 0
-      break
+  // Buscar en líneas específicas que contengan "TOTAL"
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const lineLower = line.toLowerCase()
+    
+    if (lineLower.includes('total') && !lineLower.includes('subtotal') && !lineLower.includes('iva')) {
+      // Buscar número grande en esta línea
+      const totalMatch = line.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/)
+      if (totalMatch) {
+        const amountStr = totalMatch[1].replace(/\./g, '').replace(',', '.')
+        const amount = parseFloat(amountStr) || 0
+        if (amount > 100 && amount < 100000000) { // Validar rango razonable
+          result.totalAmount = amount
+          break
+        }
+      }
     }
   }
 
-  // Si no se encontró con patrones, buscar el número más grande que parezca un importe
+  // Si no se encontró con patrones específicos, buscar en el texto normalizado
   if (result.totalAmount === 0) {
-    const largeNumbers = normalizedText.match(/\d{3,}(?:[.,]\d{2})?/g)
+    for (const pattern of totalPatterns) {
+      const match = normalizedText.match(pattern)
+      if (match) {
+        const amountStr = match[1].replace(/\./g, '').replace(',', '.')
+        const amount = parseFloat(amountStr) || 0
+        if (amount > 100 && amount < 100000000) {
+          result.totalAmount = amount
+          break
+        }
+      }
+    }
+  }
+
+  // Si aún no se encontró, buscar el número más grande que parezca un importe razonable
+  if (result.totalAmount === 0) {
+    const largeNumbers = normalizedText.match(/\d{1,3}(?:\.\d{3})*(?:,\d{2})?/g)
     if (largeNumbers) {
       const amounts = largeNumbers
         .map((num) => parseFloat(num.replace(/\./g, '').replace(',', '.')))
-        .filter((num) => num > 100) // Filtrar números muy pequeños
+        .filter((num) => num > 1000 && num < 100000000) // Filtrar números razonables
         .sort((a, b) => b - a) // Ordenar de mayor a menor
 
       if (amounts.length > 0) {
@@ -458,63 +537,186 @@ function parseInvoiceText(text) {
   }
 
   // 5. Buscar productos/items
-  // Esto es más complejo, buscamos líneas que parezcan productos
-  // Patrones: número + descripción + cantidad + precio
-  const itemLines = []
+  // Buscar la tabla de productos identificando encabezados comunes
+  const productTableKeywords = [
+    'articulo', 'artículo', 'producto', 'descripcion', 'descripción',
+    'cant', 'cantidad', 'p. unit', 'precio unit', 'unitario',
+    'total', 'importe', 'marca', 'codigo', 'código'
+  ]
+  
+  // Palabras que indican que NO es un producto (encabezados/metadatos)
+  const excludeKeywords = [
+    'factura', 'n°', 'nro', 'numero', 'número', 'código n°', 'codigo n°',
+    'fecha', 'emisión', 'vencimiento', 'vto', 'página', 'pagina',
+    'cuit', 'ing. brutos', 'ingresos brutos', 'domicilio', 'localidad',
+    'cliente', 'vendedor', 'cond iva', 'responsable', 'inscripto',
+    'subtotal', 'iva', 'pibbb', 'importe en letras', 'caea',
+    'observaciones', 'ud dispone', 'formas de pago', 'vencimiento',
+    'razón social', 'razon social', 'sucursal', 'tel:', 'email',
+    'www.', 'http', 'dirección', 'direccion'
+  ]
+
+  // Buscar el inicio de la tabla de productos
+  let productTableStart = -1
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    // Buscar líneas que tengan números (cantidad/precio) y texto (descripción)
-    // Evitar líneas que son claramente encabezados o totales
-    if (
-      line.length > 10 &&
-      /\d/.test(line) &&
-      !line.toLowerCase().includes('total') &&
-      !line.toLowerCase().includes('subtotal') &&
-      !line.toLowerCase().includes('iva') &&
-      !line.toLowerCase().includes('factura') &&
-      !/^\d{2}\/\d{2}\/\d{4}/.test(line) // No fechas
-    ) {
-      itemLines.push(line)
+    const lineLower = lines[i].toLowerCase()
+    // Buscar línea que contenga múltiples palabras clave de tabla de productos
+    const keywordCount = productTableKeywords.filter(kw => lineLower.includes(kw)).length
+    if (keywordCount >= 2) {
+      productTableStart = i + 1 // Empezar después del encabezado
+      break
     }
   }
 
-  // Intentar parsear items de las líneas encontradas
-  for (const line of itemLines.slice(0, 50)) {
-    // Buscar patrones como: "CANTIDAD DESCRIPCIÓN PRECIO" o "DESCRIPCIÓN x CANTIDAD $PRECIO"
-    const itemMatch = line.match(/(.+?)\s+(\d+(?:[.,]\d+)?)\s*(?:x|×)?\s*\$?\s*(\d+(?:[.,]\d+)?)/i)
-    if (itemMatch) {
-      const [, description, quantity, price] = itemMatch
-      const qty = parseFloat(quantity.replace(',', '.')) || 1
-      const unitPrice = parseFloat(price.replace(/\./g, '').replace(',', '.')) || 0
-
-      if (description.trim().length > 2 && unitPrice > 0) {
-        result.items.push({
-          item_name: description.trim(),
-          quantity: qty,
-          unit_price: unitPrice,
-          total_price: qty * unitPrice,
-          description: null,
-        })
+  // Si no encontramos encabezado claro, buscar líneas que parezcan productos
+  if (productTableStart === -1) {
+    // Buscar líneas con formato de tabla: texto + números (cantidad/precio)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const lineLower = line.toLowerCase()
+      
+      // Verificar que no sea un encabezado/metadato
+      const isExcluded = excludeKeywords.some(kw => lineLower.includes(kw))
+      if (isExcluded) continue
+      
+      // Buscar líneas que tengan formato de producto: texto descriptivo + números
+      // Patrón: texto (marca/código/producto) + cantidad + precio unitario + total
+      const productPattern = /^([A-ZÁÉÍÓÚÑ\s]{2,})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match = line.match(productPattern)
+      
+      if (match) {
+        const [, description, quantity, unitPriceStr, totalPriceStr] = match
+        
+        // Verificar que la descripción no sea solo números o fechas
+        if (!/^\d+$/.test(description.trim()) && !/^\d{2}\/\d{2}\/\d{4}/.test(description.trim())) {
+          const qty = parseFloat(quantity) || 1
+          const unitPrice = parseFloat(unitPriceStr.replace(/\./g, '').replace(',', '.')) || 0
+          const totalPrice = parseFloat(totalPriceStr.replace(/\./g, '').replace(',', '.')) || 0
+          
+          // Validar que los precios sean razonables
+          if (unitPrice > 0 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
+            result.items.push({
+              item_name: description.trim(),
+              quantity: qty,
+              unit_price: unitPrice,
+              total_price: totalPrice || (qty * unitPrice),
+              description: null,
+            })
+          }
+        }
       }
-    } else {
-      // Si no coincide con el patrón, intentar extraer solo descripción y precio
-      const simpleMatch = line.match(/(.+?)\s+\$?\s*(\d+(?:\.\d{3})*(?:,\d{2})?)/)
-      if (simpleMatch) {
-        const [, description, price] = simpleMatch
-        const unitPrice = parseFloat(price.replace(/\./g, '').replace(',', '.')) || 0
-
-        if (description.trim().length > 2 && unitPrice > 0 && unitPrice < result.totalAmount) {
+    }
+  } else {
+    // Parsear productos desde la tabla identificada
+    for (let i = productTableStart; i < Math.min(productTableStart + 100, lines.length); i++) {
+      const line = lines[i]
+      const lineLower = line.toLowerCase()
+      
+      // Detener si encontramos totales o resúmenes
+      if (lineLower.includes('subtotal') || 
+          lineLower.includes('total') && (lineLower.includes('iva') || lineLower.includes('pibbb'))) {
+        break
+      }
+      
+      // Verificar que no sea un encabezado/metadato
+      const isExcluded = excludeKeywords.some(kw => lineLower.includes(kw))
+      if (isExcluded) continue
+      
+      // Buscar patrones de productos en formato de tabla
+      // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL
+      // Ejemplo: "MD 24703 BULBO CHEV. CORSA 1 17.083,90 46% 9.225,31"
+      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,20})\s+(\d{4,})\s+([A-ZÁÉÍÓÚÑ\s\.]{5,40})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(?:\d+%|\d+\.\d+%|\s+)\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match1 = line.match(tablePattern1)
+      
+      if (match1) {
+        const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = match1
+        
+        const qty = parseFloat(cantidad) || 1
+        const unitPrice = parseFloat(precioUnitStr.replace(/\./g, '').replace(',', '.')) || 0
+        const totalPrice = parseFloat(totalStr.replace(/\./g, '').replace(',', '.')) || 0
+        
+        if (unitPrice > 0 && unitPrice < 10000000 && descripcion.trim().length > 3) {
           result.items.push({
-            item_name: description.trim(),
-            quantity: 1,
+            item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
+            quantity: qty,
             unit_price: unitPrice,
-            total_price: unitPrice,
-            description: null,
+            total_price: totalPrice || (qty * unitPrice),
+            description: `Código: ${codigo}`,
           })
+          continue
+        }
+      }
+      
+      // Patrón 2: DESCRIPCION CANT PRECIO (sin marca/código al inicio)
+      const tablePattern2 = /^([A-ZÁÉÍÓÚÑ\s\.]{5,50})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match2 = line.match(tablePattern2)
+      
+      if (match2) {
+        const [, descripcion, cantidad, precioUnitStr, totalStr] = match2
+        
+        // Verificar que la descripción no sea solo números o fechas
+        if (!/^\d+$/.test(descripcion.trim()) && !/^\d{2}\/\d{2}\/\d{4}/.test(descripcion.trim())) {
+          const qty = parseFloat(cantidad) || 1
+          const unitPrice = parseFloat(precioUnitStr.replace(/\./g, '').replace(',', '.')) || 0
+          const totalPrice = parseFloat(totalStr.replace(/\./g, '').replace(',', '.')) || 0
+          
+          if (unitPrice > 0 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
+            result.items.push({
+              item_name: descripcion.trim(),
+              quantity: qty,
+              unit_price: unitPrice,
+              total_price: totalPrice || (qty * unitPrice),
+              description: null,
+            })
+          }
+        }
+      }
+      
+      // Patrón 3: Solo descripción y precio (sin cantidad explícita, asumir 1)
+      const simplePattern = /^([A-ZÁÉÍÓÚÑ\s\.]{5,50})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      const match3 = line.match(simplePattern)
+      
+      if (match3 && !match1 && !match2) {
+        const [, descripcion, precioStr] = match3
+        
+        // Verificar que no sea un campo de encabezado
+        if (!excludeKeywords.some(kw => descripcion.toLowerCase().includes(kw))) {
+          const unitPrice = parseFloat(precioStr.replace(/\./g, '').replace(',', '.')) || 0
+          
+          if (unitPrice > 100 && unitPrice < 10000000 && descripcion.trim().length > 5) {
+            result.items.push({
+              item_name: descripcion.trim(),
+              quantity: 1,
+              unit_price: unitPrice,
+              total_price: unitPrice,
+              description: null,
+            })
+          }
         }
       }
     }
   }
+
+  // Filtrar items duplicados o inválidos
+  result.items = result.items.filter((item, index, self) => {
+    // Eliminar items con nombres muy cortos o que sean claramente metadatos
+    if (item.item_name.length < 3) return false
+    
+    // Eliminar items que sean claramente campos de encabezado
+    const nameLower = item.item_name.toLowerCase()
+    if (excludeKeywords.some(kw => nameLower.includes(kw))) return false
+    
+    // Eliminar items con precios inválidos
+    if (item.unit_price <= 0 || item.unit_price > 10000000) return false
+    if (item.quantity <= 0 || item.quantity > 1000) return false
+    
+    // Eliminar duplicados exactos
+    return index === self.findIndex(i => 
+      i.item_name === item.item_name && 
+      i.unit_price === item.unit_price &&
+      i.quantity === item.quantity
+    )
+  })
 
   return result
 }
