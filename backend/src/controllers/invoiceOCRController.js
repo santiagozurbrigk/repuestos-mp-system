@@ -125,7 +125,21 @@ try {
         logger.warn('El private_key no parece tener el formato PEM correcto')
       }
       
+      // Validar y normalizar el private_key
+      // El private_key debe tener saltos de línea reales, no \n como texto
+      if (credentials.private_key.includes('\\n')) {
+        logger.info('Convirtiendo \\n literales a saltos de línea reales en private_key')
+        credentials.private_key = credentials.private_key.replace(/\\n/g, '\n')
+      }
+      
+      // Verificar que el private_key tenga el formato correcto después de la conversión
+      if (!credentials.private_key.includes('\n')) {
+        logger.warn('El private_key no contiene saltos de línea. Esto puede causar problemas de autenticación.')
+      }
+      
       logger.info(`Credenciales válidas para: ${credentials.client_email}`)
+      logger.info(`Private key length: ${credentials.private_key.length} caracteres`)
+      logger.info(`Private key starts with: ${credentials.private_key.substring(0, 30)}...`)
       
       // Usar el project_id del JSON si está disponible, o el de la variable de entorno
       const projectId = credentials.project_id || config.GOOGLE_CLOUD_PROJECT_ID
@@ -145,6 +159,24 @@ try {
         credentials,
         projectId: projectId,
       })
+      
+      // Intentar hacer una llamada de prueba para verificar las credenciales
+      logger.info('Verificando credenciales con una llamada de prueba...')
+      try {
+        // Hacer una llamada de prueba con una imagen pequeña (1x1 pixel PNG)
+        const testImage = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+        await visionClient.documentTextDetection({
+          image: { content: testImage },
+        })
+        logger.info('✅ Credenciales verificadas correctamente con llamada de prueba')
+      } catch (testError) {
+        logger.error('❌ Error al verificar credenciales con llamada de prueba:', {
+          code: testError.code,
+          message: testError.message,
+        })
+        // No lanzar error aquí, solo registrar. El cliente se creó pero puede fallar en uso real
+      }
+      
       logger.info('Google Cloud Vision inicializado correctamente con credenciales desde variable de entorno')
     } catch (parseError) {
       visionClientError = `Error al parsear credenciales: ${parseError.message}`
