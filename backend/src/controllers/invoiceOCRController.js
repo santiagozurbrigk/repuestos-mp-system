@@ -443,10 +443,21 @@ function parseInvoiceText(text) {
   if (result.vendorName && (result.vendorName.toLowerCase().includes('sucursal') || 
                             result.vendorName.toLowerCase().includes('alquimac') ||
                             result.vendorName.toLowerCase().includes('mar del plata'))) {
-    for (let i = 0; i < Math.min(20, lines.length); i++) {
+    logger.warn(`Proveedor encontrado contiene palabras excluidas: ${result.vendorName}, buscando alternativa`)
+    for (let i = 0; i < Math.min(25, lines.length); i++) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
       
+      // Buscar específicamente nombres que contengan "AUTO", "NÁUTICA", "SUR", "SRL"
+      if (lineLower.includes('auto') && (lineLower.includes('náutica') || lineLower.includes('nautica') || lineLower.includes('sur'))) {
+        if (line.length > 10 && line.length < 80 && /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim())) {
+          result.vendorName = line.trim()
+          logger.info(`Proveedor corregido a: ${result.vendorName}`)
+          break
+        }
+      }
+      
+      // Buscar cualquier línea que tenga formato de empresa y no contenga palabras excluidas
       if (line.length > 10 &&
           line.length < 80 &&
           /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim()) &&
@@ -455,9 +466,13 @@ function parseInvoiceText(text) {
           !lineLower.includes('localidad') &&
           !lineLower.includes('tel:') &&
           !lineLower.includes('email') &&
+          !lineLower.includes('www.') &&
+          !lineLower.includes('alquimac') &&
+          !lineLower.includes('mar del plata') &&
           (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i) || 
            line.split(/\s+/).length >= 3)) {
         result.vendorName = line.trim()
+        logger.info(`Proveedor corregido a: ${result.vendorName}`)
         break
       }
     }
