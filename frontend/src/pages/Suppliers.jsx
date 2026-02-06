@@ -1131,7 +1131,6 @@ export default function Suppliers() {
                             <tr>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Producto</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-24">Cantidad</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Total</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-16"></th>
                             </tr>
                           </thead>
@@ -1150,22 +1149,11 @@ export default function Suppliers() {
                                 <td className="px-3 py-2">
                                   <input
                                     type="number"
-                                    step="0.01"
-                                    min="0"
+                                    step="1"
+                                    min="1"
                                     value={item.quantity || 1}
-                                    onChange={(e) => handleUpdateInvoiceItem(index, 'quantity', parseFloat(e.target.value) || 1)}
+                                    onChange={(e) => handleUpdateInvoiceItem(index, 'quantity', parseInt(e.target.value) || 1)}
                                     className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                  />
-                                </td>
-                                <td className="px-3 py-2">
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={item.total_price || 0}
-                                    onChange={(e) => handleUpdateInvoiceItem(index, 'total_price', parseFloat(e.target.value) || 0)}
-                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                    placeholder="0.00"
                                   />
                                 </td>
                                 <td className="px-3 py-2">

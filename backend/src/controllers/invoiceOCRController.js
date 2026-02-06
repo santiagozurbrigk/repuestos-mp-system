@@ -957,6 +957,9 @@ function parseInvoiceText(text) {
         return parseFloat(cleaned) || 0
       }
       
+      // Rastrear productos ya procesados para evitar duplicados
+      const processedProducts = new Set()
+      
       let i = tableStartIndex
       while (i < lines.length) {
         const line = lines[i]
@@ -964,8 +967,31 @@ function parseInvoiceText(text) {
         
         // Detener si encontramos totales o resúmenes
         if (lineLower.includes('subtotal') || 
-            (lineLower.includes('total') && (lineLower.includes('iva') || lineLower.includes('pibbb')))) {
+            (lineLower.includes('total') && (lineLower.includes('iva') || lineLower.includes('pibbb'))) ||
+            lineLower.includes('importe en letras') ||
+            lineLower.includes('observaciones') ||
+            lineLower.includes('forma de pago') ||
+            lineLower.includes('flete bulto') ||
+            lineLower.includes('flete bulto')) {
           break
+        }
+        
+        // Excluir líneas que claramente NO son productos
+        if (lineLower.includes('flete') ||
+            lineLower.includes('forma de pago') ||
+            lineLower.includes('metodo de pago') ||
+            lineLower.includes('importe en letras') ||
+            lineLower.includes('observaciones') ||
+            lineLower.includes('estimado cliente') ||
+            lineLower.includes('ud dispone') ||
+            lineLower.includes('nro. caea') ||
+            lineLower.includes('fecha de vto') ||
+            lineLower === 'bonif' ||
+            lineLower === 'dto' ||
+            lineLower === 'total' ||
+            lineLower === '$') {
+          i++
+          continue
         }
         
         // Buscar líneas con números grandes (precios) - estas son los TOTALES de productos
@@ -974,7 +1000,8 @@ function parseInvoiceText(text) {
           const totalPrice = parseArgentineNumber(largeNumberMatch[1])
           
           // Si el número es grande (>1000), probablemente es un precio total de producto
-          if (totalPrice >= 1000 && totalPrice < 10000000) {
+          // Pero excluir números muy grandes que son totales generales (más de 400,000)
+          if (totalPrice >= 1000 && totalPrice < 400000) {
             logger.info(`Línea ${i} contiene precio total posible: ${largeNumberMatch[1]} -> ${totalPrice}`)
             
             // Buscar hacia atrás para encontrar los datos del producto
@@ -986,44 +1013,62 @@ function parseInvoiceText(text) {
             let precioUnitario = null
             let descuento = null
             
-            // Buscar precio unitario (línea anterior o 2-5 líneas antes del total)
-            // El precio unitario generalmente está antes del total en la misma fila de producto
-            for (let j = Math.max(i - 6, tableStartIndex); j < i; j++) {
-              const prevLine = lines[j]
+            // Buscar precio unitario SOLO en las 2-3 líneas inmediatamente anteriores al total
+            // El precio unitario está en la misma fila, generalmente 1-2 líneas antes del total
+            // NO buscar más atrás para evitar tomar otros totales como precios unitarios
+            for (let j = Math.max(i - 3, tableStartIndex); j < i; j++) {
+              const prevLine = lines[j].trim()
+              // Excluir líneas que son porcentajes, símbolos, o texto
+              if (prevLine.match(/^\d+%$/) || prevLine === '$' || /^[A-Z]/.test(prevLine)) {
+                continue
+              }
+              
               const prevLargeNumber = prevLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
               if (prevLargeNumber) {
                 const prevPrice = parseArgentineNumber(prevLargeNumber[1])
-                // Si es un precio grande pero menor que el total, probablemente es el precio unitario
-                // También puede ser igual o mayor si hay descuentos, pero generalmente es menor
-                if (prevPrice >= 1000 && prevPrice < 10000000) {
-                  // Si el precio anterior es menor que el total, es muy probable que sea el precio unitario
-                  // Si es mayor, podría ser otro total o un error, pero lo aceptamos si está cerca
-                  if (prevPrice < totalPrice || (prevPrice > totalPrice && Math.abs(j - i) <= 3)) {
-                    precioUnitario = prevPrice
-                    logger.info(`Precio unitario encontrado en línea ${j}: ${prevLargeNumber[1]} -> ${precioUnitario} (Total: ${totalPrice})`)
-                    break
-                  }
+                // El precio unitario generalmente es menor o igual al total
+                // Solo aceptar si está en un rango razonable (no es otro total de otro producto)
+                if (prevPrice >= 1000 && prevPrice <= totalPrice * 1.5 && prevPrice < 200000) {
+                  precioUnitario = prevPrice
+                  logger.info(`Precio unitario encontrado en línea ${j}: ${prevLargeNumber[1]} -> ${precioUnitario} (Total: ${totalPrice})`)
+                  break
                 }
               }
             }
             
-            // Si no encontramos precio unitario, usar el total como precio unitario (producto único)
+            // Si no encontramos precio unitario, calcularlo dividiendo el total por la cantidad
+            // (solo si tenemos cantidad, de lo contrario usar el total como precio unitario)
             if (!precioUnitario && totalPrice >= 1000) {
-              precioUnitario = totalPrice
-              logger.info(`No se encontró precio unitario, usando total como precio unitario: ${precioUnitario}`)
+              // Intentar encontrar cantidad primero
+              let foundQty = cantidad || 1
+              for (let j = Math.max(i - 4, tableStartIndex); j < i; j++) {
+                const qtyLine = lines[j].trim()
+                if (/^\d{1,2}$/.test(qtyLine)) {
+                  const qty = parseInt(qtyLine)
+                  if (qty >= 1 && qty <= 100) {
+                    foundQty = qty
+                    break
+                  }
+                }
+              }
+              precioUnitario = totalPrice / foundQty
+              logger.info(`No se encontró precio unitario, calculado: Total ${totalPrice} / Cantidad ${foundQty} = ${precioUnitario}`)
             }
             
             // Buscar descripción (línea con texto largo antes del precio unitario)
-            for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
+            // Buscar desde más cerca del precio total hacia atrás
+            for (let j = i - 1; j >= Math.max(i - 8, tableStartIndex); j--) {
               const prevLine = lines[j].trim()
               const prevLineLower = prevLine.toLowerCase()
               
               // Excluir líneas que no son descripciones
-              if (prevLine.length > 10 && 
+              if (prevLine.length > 5 && 
                   prevLine.length < 80 &&
                   /[A-ZÁÉÍÓÚÑ]/.test(prevLine) &&
                   !prevLine.match(/^\d+$/) &&
                   !prevLine.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
+                  !prevLine.match(/^\d+%$/) &&
+                  !prevLine.match(/^\$+$/) &&
                   !prevLineLower.includes('chiaia') &&
                   !prevLineLower.includes('fabian') &&
                   !prevLineLower.includes('vendedor') &&
@@ -1034,7 +1079,12 @@ function parseInvoiceText(text) {
                   !prevLineLower.includes('cant') &&
                   !prevLineLower.includes('total') &&
                   !prevLineLower.includes('dto') &&
-                  !prevLineLower.includes('bonif')) {
+                  !prevLineLower.includes('bonif') &&
+                  !prevLineLower.includes('flete') &&
+                  !prevLineLower.includes('forma de pago') &&
+                  !prevLineLower.includes('metodo de pago') &&
+                  !prevLineLower.includes('importe en letras') &&
+                  !prevLineLower.includes('observaciones')) {
                 descripcion = prevLine
                 logger.info(`Descripción encontrada en línea ${j}: ${descripcion}`)
                 break
@@ -1047,11 +1097,27 @@ function parseInvoiceText(text) {
               if (descIndex > 0) {
                 for (let j = Math.max(descIndex - 5, tableStartIndex); j < descIndex; j++) {
                   const codeLine = lines[j].trim()
+                  const codeLineLower = codeLine.toLowerCase()
+                  
+                  // Excluir palabras que NO son códigos
+                  if (codeLineLower === 'bonif' ||
+                      codeLineLower === 'dto' ||
+                      codeLineLower === 'total' ||
+                      codeLineLower === 'cant' ||
+                      codeLineLower === 'p. unit' ||
+                      codeLineLower === 'marca' ||
+                      codeLineLower === 'codigo' ||
+                      codeLineLower === 'articulo' ||
+                      codeLineLower.includes('flete') ||
+                      codeLineLower.includes('forma de pago')) {
+                    continue
+                  }
+                  
                   // Buscar código: número de 3+ dígitos o alfanumérico corto
                   if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,15}$/.test(codeLine)) &&
                       codeLine.length < 20 &&
-                      !codeLine.toLowerCase().includes('marca') &&
-                      !codeLine.toLowerCase().includes('codigo')) {
+                      !codeLineLower.includes('marca') &&
+                      !codeLineLower.includes('codigo')) {
                     codigo = codeLine
                     logger.info(`Código encontrado en línea ${j}: ${codigo}`)
                     break
@@ -1096,17 +1162,65 @@ function parseInvoiceText(text) {
             if (descripcion && totalPrice >= 1000) {
               const productName = marca ? `${marca} ${descripcion}`.trim() : descripcion
               
-              // Si no encontramos precio unitario, usar el total dividido por la cantidad
-              const finalUnitPrice = precioUnitario || (totalPrice / (cantidad || 1))
+              // Verificar que no sea un elemento excluido
+              const productNameLower = productName.toLowerCase()
+              if (productNameLower.includes('flete') ||
+                  productNameLower.includes('forma de pago') ||
+                  productNameLower.includes('metodo de pago') ||
+                  productNameLower.includes('importe en letras') ||
+                  productNameLower.includes('observaciones') ||
+                  productNameLower.includes('bonif') ||
+                  productNameLower === 'dto') {
+                logger.warn(`❌ Producto excluido: "${productName}"`)
+                i++
+                continue
+              }
               
-              result.items.push({
-                item_name: productName,
-                quantity: cantidad || 1,
-                unit_price: finalUnitPrice,
-                total_price: totalPrice,
-                description: codigo ? `Código: ${codigo}` : null,
-              })
-              logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}`)
+              // Crear clave única para el producto (descripción + código si existe)
+              const productKey = codigo ? `${productNameLower}_${codigo}` : productNameLower
+              
+              // Verificar si ya procesamos este producto en esta factura
+              if (processedProducts.has(productKey)) {
+                logger.info(`⏭️ Producto ya procesado, ignorando duplicado: "${productName}"`)
+                i++
+                continue
+              }
+              
+              // Verificar si ya existe un producto con la misma descripción en result.items
+              const existingProductIndex = result.items.findIndex(item => 
+                item.item_name.toLowerCase() === productNameLower
+              )
+              
+              if (existingProductIndex >= 0) {
+                // Si ya existe, solo actualizar cantidad si encontramos una cantidad diferente
+                // pero no crear duplicado
+                const existingQty = result.items[existingProductIndex].quantity
+                if (cantidad && cantidad !== existingQty) {
+                  result.items[existingProductIndex].quantity = cantidad
+                  logger.info(`🔄 Producto existente actualizado: "${productName}" - Nueva Cant: ${cantidad}`)
+                } else {
+                  logger.info(`⏭️ Producto duplicado ignorado: "${productName}"`)
+                }
+                processedProducts.add(productKey)
+              } else {
+                // Si no encontramos precio unitario, usar el total dividido por la cantidad
+                const finalUnitPrice = precioUnitario || (totalPrice / (cantidad || 1))
+                
+                result.items.push({
+                  item_name: productName,
+                  quantity: cantidad || 1,
+                  unit_price: finalUnitPrice,
+                  total_price: totalPrice,
+                  description: codigo ? `Código: ${codigo}` : null,
+                })
+                processedProducts.add(productKey)
+                logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}`)
+                
+                // Avanzar más líneas para evitar procesar el mismo producto múltiples veces
+                // Generalmente un producto ocupa 3-5 líneas (marca, código, descripción, cantidad, precios)
+                i += 2
+                continue
+              }
             } else {
               logger.warn(`❌ Producto incompleto - Desc: ${descripcion || 'N/A'}, PrecioUnit: ${precioUnitario || 'N/A'}, Total: ${totalPrice}`)
             }
