@@ -504,11 +504,11 @@ function parseInvoiceText(text) {
   // Buscar específicamente después de "FACTURA" o "N°" para evitar CUITs
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (line.toLowerCase().includes('factura') || line.toLowerCase().includes('n°') || line.toLowerCase().includes('nro')) {
+    const lineLower = line.toLowerCase()
+    
+    if (lineLower.includes('factura') || lineLower.includes('n°') || lineLower.includes('nro')) {
       logger.info(`Línea ${i} (posible factura): ${line}`)
     }
-    const line = lines[i]
-    const lineLower = line.toLowerCase()
     
     // Buscar líneas que contengan "FACTURA" seguido de número con formato específico
     if (lineLower.includes('factura')) {
