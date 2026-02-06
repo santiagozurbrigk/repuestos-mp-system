@@ -566,54 +566,115 @@ function parseInvoiceText(text) {
     /(\d{2}-\d{2}-\d{4})/g, // DD-MM-YYYY
   ]
 
-  // Buscar fecha de emisión
+  // Buscar fecha de emisión - ESTRATEGIA GENÉRICA
+  // Buscar fechas cerca de "FECHA" pero priorizar las que están más arriba y no son "INICIO DE ACTIVIDADES" o "CAEA"
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
-    if (lineLower.includes('fecha') && (lineLower.includes('emisión') || lineLower.includes('emision'))) {
-      const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/)
+    // Buscar líneas con "FECHA" pero excluir contextos no deseados
+    if (lineLower.includes('fecha') && 
+        !lineLower.includes('inicio de actividades') &&
+        !lineLower.includes('caea') &&
+        !lineLower.includes('vencimiento') &&
+        !lineLower.includes('vto')) {
+      // Buscar formato DD-MM-YYYY o DD/MM/YYYY en la misma línea o siguiente
+      for (let j = i; j < Math.min(i + 2, lines.length); j++) {
+        const searchLine = lines[j]
+        const dateMatch = searchLine.match(/(\d{2}[-\/]\d{2}[-\/]\d{4})/)
+        if (dateMatch) {
+          const dateStr = dateMatch[1].replace(/-/g, '/')
+          result.invoiceDate = parseDate(dateStr)
+          logger.info(`Fecha de factura encontrada en línea ${j}: ${dateStr} (cerca de línea ${i}: ${line})`)
+          break
+        }
+      }
+      if (result.invoiceDate) break
+    }
+  }
+  
+  // Si no se encontró, buscar la primera fecha válida en las primeras 20 líneas (excluyendo contextos no deseados)
+  if (!result.invoiceDate) {
+    for (let i = 0; i < Math.min(20, lines.length); i++) {
+      const line = lines[i]
+      const lineLower = line.toLowerCase()
+      
+      // Excluir líneas con contextos no deseados
+      if (lineLower.includes('inicio de actividades') ||
+          lineLower.includes('caea') ||
+          lineLower.includes('vencimiento caea')) {
+        continue
+      }
+      
+      const dateMatch = line.match(/(\d{2}[-\/]\d{2}[-\/]\d{4})/)
       if (dateMatch) {
-        result.invoiceDate = parseDate(dateMatch[1])
+        const dateStr = dateMatch[1].replace(/-/g, '/')
+        result.invoiceDate = parseDate(dateStr)
+        logger.info(`Fecha de factura encontrada (fallback) en línea ${i}: ${dateStr}`)
         break
       }
     }
   }
 
-  // Buscar fecha de vencimiento
+  // Buscar fecha de vencimiento - ESTRATEGIA GENÉRICA
+  // Buscar fechas cerca de "vencimiento", "vto", o "CONDICION DE PAGO"
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
-    if (lineLower.includes('vencimiento') || lineLower.includes('vto') || 
-        (lineLower.includes('fecha') && lineLower.includes('vto'))) {
-      const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/)
-      if (dateMatch) {
-        result.dueDate = parseDate(dateMatch[1])
-        break
+    // Buscar específicamente "Fecha vencimiento", "CONDICION DE PAGO", o "Vencimiento"
+    if ((lineLower.includes('fecha') && lineLower.includes('vencimiento')) ||
+        (lineLower.includes('condicion de pago') || lineLower.includes('condición de pago')) ||
+        (lineLower.includes('vencimiento') && !lineLower.includes('caea'))) {
+      // Buscar fecha en la misma línea o líneas siguientes (hasta 2 líneas después)
+      for (let j = i; j < Math.min(i + 3, lines.length); j++) {
+        const searchLine = lines[j]
+        const dateMatch = searchLine.match(/(\d{2}[-\/]\d{2}[-\/]\d{4})/)
+        if (dateMatch) {
+          const dateStr = dateMatch[1].replace(/-/g, '/')
+          result.dueDate = parseDate(dateStr)
+          logger.info(`Fecha de vencimiento encontrada en línea ${j}: ${dateStr} (cerca de línea ${i}: ${line})`)
+          break
+        }
       }
+      if (result.dueDate) break
     }
   }
-
-  // Si no se encontraron fechas específicas, buscar todas las fechas y usar la primera como emisión
-  if (!result.invoiceDate || !result.dueDate) {
-    const dates = []
-    for (const pattern of datePatterns) {
-      const matches = normalizedText.match(pattern)
-      if (matches) {
-        dates.push(...matches)
+  
+  // Si no se encontró, buscar fechas después de la fecha de factura pero excluyendo CAEA
+  if (!result.dueDate && result.invoiceDate) {
+    const invoiceDateIndex = lines.findIndex((line, idx) => {
+      const dateMatch = line.match(/(\d{2}[-\/]\d{2}[-\/]\d{4})/)
+      if (dateMatch) {
+        const dateStr = dateMatch[1].replace(/-/g, '/')
+        return parseDate(dateStr) === result.invoiceDate
       }
-    }
-
-    // Eliminar duplicados
-    const uniqueDates = [...new Set(dates)]
-
-    if (uniqueDates.length > 0 && !result.invoiceDate) {
-      result.invoiceDate = parseDate(uniqueDates[0])
-    }
+      return false
+    })
     
-    if (uniqueDates.length > 1 && !result.dueDate) {
-      result.dueDate = parseDate(uniqueDates[1])
+    if (invoiceDateIndex >= 0) {
+      // Buscar la siguiente fecha válida después de la fecha de factura
+      for (let i = invoiceDateIndex + 1; i < Math.min(invoiceDateIndex + 15, lines.length); i++) {
+        const line = lines[i]
+        const lineLower = line.toLowerCase()
+        
+        // Excluir fechas de CAEA
+        if (lineLower.includes('caea')) {
+          continue
+        }
+        
+        const dateMatch = line.match(/(\d{2}[-\/]\d{2}[-\/]\d{4})/)
+        if (dateMatch) {
+          const dateStr = dateMatch[1].replace(/-/g, '/')
+          const parsedDate = parseDate(dateStr)
+          // Verificar que sea una fecha futura respecto a la fecha de factura (generalmente las fechas de vencimiento son futuras)
+          if (parsedDate && parsedDate > result.invoiceDate) {
+            result.dueDate = parsedDate
+            logger.info(`Fecha de vencimiento encontrada (después de fecha factura) en línea ${i}: ${dateStr}`)
+            break
+          }
+        }
+      }
     }
   }
 
