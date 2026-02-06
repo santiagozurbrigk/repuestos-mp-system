@@ -948,58 +948,97 @@ function parseInvoiceText(text) {
         continue
       }
       
-      // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL (más flexible)
-      // Ejemplo: "MD 24703 BULBO CHEV. CORSA 1 17.083,90 46% 9.225,31"
-      // Mejorado para capturar mejor los números con formato argentino
-      // Hacer el patrón más flexible para capturar variaciones
-      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,30})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
-      const match1 = line.match(tablePattern1)
+      // Patrón 1 ROBUSTO: MARCA CODIGO ARTICULO CANT P.UNIT DTO TOTAL
+      // Basado en el formato exacto de la factura: "MD 24703 BULBO CHEV. CORSA 1 $ 17.083,90 46% $ 9.225,31"
+      // O: "ELIFEL ROM 210 ELECTROBOMBA VW. GOL 2 $ 51.177,39 46% $ 55.271,58"
+      // Este patrón busca específicamente líneas con estructura de tabla de productos
+      // Formato: MARCA (2-15 chars) + CODIGO (numérico o alfanumérico con espacios) + ARTICULO (descripción) + CANT + P.UNIT ($ opcional) + DTO (% opcional) + TOTAL ($ opcional)
       
-      // Patrón 1 alternativo: más flexible, permite espacios variables
-      const tablePattern1Alt = /^([A-ZÁÉÍÓÚÑ\s]{1,30})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
-      const match1Alt = !match1 ? line.match(tablePattern1Alt) : null
+      // Estrategia: buscar líneas que tengan al menos 2 números grandes (precio unitario y total)
+      // y que tengan estructura: texto_corto + texto_medio + texto_largo + número_pequeño + número_grande + porcentaje_opcional + número_grande
       
-      // Intentar con patrón 1 primero
-      const finalMatch = match1 || match1Alt
-      if (finalMatch) {
-        logger.info(`Línea ${i} coincide con patrón 1: ${line.substring(0, 150)}`)
-        const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = finalMatch
+      // Primero, buscar si la línea tiene la estructura básica: texto + números grandes
+      const hasLargeNumbers = line.match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/g)
+      let match1 = null
+      
+      if (hasLargeNumbers && hasLargeNumbers.length >= 2) {
+        // Buscar patrón específico de tabla: MARCA + CODIGO + ARTICULO + CANT + P.UNIT + DTO + TOTAL
+        // Patrón principal: maneja códigos numéricos y alfanuméricos, símbolo $ opcional
+        const tablePattern1 = /^([A-ZÁÉÍÓÚÑ]{2,15})\s+([A-Z0-9\s\-]{3,20})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+(?:\.\d+)?%)?\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
+        match1 = line.match(tablePattern1)
         
-        const parseArgentineNumber = (numStr) => {
-          if (!numStr) return 0
-          // Remover puntos (separadores de miles) y reemplazar coma por punto para decimales
-          const cleaned = numStr.trim().replace(/\./g, '').replace(',', '.')
-          return parseFloat(cleaned) || 0
+        // Patrón alternativo: sin símbolo $, más flexible con espacios
+        if (!match1) {
+          const tablePattern1Alt = /^([A-ZÁÉÍÓÚÑ]{2,15})\s+([A-Z0-9\s\-]{3,20})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+(?:\.\d+)?%)?\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
+          match1 = line.match(tablePattern1Alt)
         }
         
-        const qty = parseFloat(cantidad) || 1
-        const unitPrice = parseArgentineNumber(precioUnitStr)
-        const totalPrice = parseArgentineNumber(totalStr)
+        // Patrón alternativo 2: más flexible, permite que el código y la descripción se mezclen un poco
+        if (!match1) {
+          const tablePattern1Alt2 = /^([A-ZÁÉÍÓÚÑ]{2,15})\s+([A-Z0-9\s\-]{3,25})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+(?:\.\d+)?%)?\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
+          match1 = line.match(tablePattern1Alt2)
+        }
         
-        logger.info(`Patrón 1 parseado - Marca: ${marca.trim()}, Código: ${codigo}, Desc: ${descripcion.trim()}, Cant: ${qty}, PrecioUnit: ${precioUnitStr} -> ${unitPrice}, Total: ${totalStr} -> ${totalPrice}`)
+        // Si encontramos el patrón, procesarlo
+        if (match1) {
+          logger.info(`Línea ${i} coincide con patrón 1 (tabla de productos): ${line.substring(0, 150)}`)
+          const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = match1
         
-        // Validar que los precios sean razonables
-        // Reducir el mínimo a 100 para capturar productos más baratos, pero validar que tenga sentido
-        const isValidPrice = (unitPrice >= 100 && unitPrice < 10000000) || 
-                            (unitPrice >= 50 && unitPrice < 100 && totalPrice >= 1000) // Si el precio unitario es bajo pero el total es alto
-        
-        if (isValidPrice && 
-            totalPrice >= 100 && totalPrice < 10000000 &&
-            descripcion.trim().length > 3 &&
-            !descripcion.trim().match(/^\d+$/) &&
-            !descripcion.trim().toLowerCase().includes('chiaia') &&
-            !descripcion.trim().toLowerCase().includes('fabian')) {
-          result.items.push({
-            item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
-            quantity: qty,
-            unit_price: unitPrice,
-            total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
-            description: `Código: ${codigo}`,
-          })
-          logger.info(`✅ Producto encontrado (patrón 1): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
-          continue
-        } else {
-          logger.warn(`❌ Producto rechazado (patrón 1): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}, isValidPrice: ${isValidPrice}`)
+          const parseArgentineNumber = (numStr) => {
+            if (!numStr) return 0
+            // Remover símbolo $, puntos (separadores de miles) y reemplazar coma por punto para decimales
+            const cleaned = numStr.trim().replace(/\$/g, '').replace(/\./g, '').replace(',', '.')
+            return parseFloat(cleaned) || 0
+          }
+          
+          // Limpiar y validar código (puede ser numérico o alfanumérico)
+          const codigoLimpio = codigo.trim()
+          
+          // Validar que el código tenga sentido (no sea solo espacios o muy corto)
+          if (codigoLimpio.length < 2) {
+            logger.warn(`Código inválido en línea ${i}: "${codigoLimpio}"`)
+            continue
+          }
+          
+          const qty = parseFloat(cantidad) || 1
+          const unitPrice = parseArgentineNumber(precioUnitStr)
+          const totalPrice = parseArgentineNumber(totalStr)
+          
+          logger.info(`Patrón 1 parseado - Marca: "${marca.trim()}", Código: "${codigoLimpio}", Desc: "${descripcion.trim()}", Cant: ${qty}, PrecioUnit: "${precioUnitStr}" -> ${unitPrice}, Total: "${totalStr}" -> ${totalPrice}`)
+          
+          // Validar que los precios sean razonables para productos de repuestos automotrices
+          // Precio unitario mínimo: 100 (productos muy baratos) o si el total es alto
+          // Precio unitario máximo: 10,000,000 (productos muy caros pero posibles)
+          const isValidUnitPrice = (unitPrice >= 100 && unitPrice < 10000000) || 
+                                  (unitPrice >= 50 && unitPrice < 100 && totalPrice >= 1000)
+          const isValidTotalPrice = totalPrice >= 100 && totalPrice < 10000000
+          
+          // Validar que la descripción tenga sentido (no sea solo números, fechas, o nombres)
+          const descripcionLimpia = descripcion.trim()
+          const isValidDescription = descripcionLimpia.length >= 5 &&
+                                    !descripcionLimpia.match(/^\d+$/) &&
+                                    !descripcionLimpia.match(/^\d{2}\/\d{2}\/\d{4}/) &&
+                                    !descripcionLimpia.toLowerCase().includes('chiaia') &&
+                                    !descripcionLimpia.toLowerCase().includes('fabian') &&
+                                    !descripcionLimpia.toLowerCase().includes('vendedor') &&
+                                    !descripcionLimpia.toLowerCase().includes('cliente')
+          
+          if (isValidUnitPrice && isValidTotalPrice && isValidDescription && qty > 0 && qty <= 1000) {
+            // Construir nombre del producto: Marca + Descripción
+            const productName = `${marca.trim()} ${descripcionLimpia}`.trim()
+            
+            result.items.push({
+              item_name: productName,
+              quantity: qty,
+              unit_price: unitPrice,
+              total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
+              description: `Código: ${codigoLimpio}`,
+            })
+            logger.info(`✅ Producto encontrado (patrón 1): "${productName}" - Cant: ${qty}, Precio Unit: ${unitPrice}, Total: ${totalPrice}, Código: ${codigoLimpio}`)
+            continue
+          } else {
+            logger.warn(`❌ Producto rechazado (patrón 1) - Desc: "${descripcionLimpia}", Precio: ${unitPrice}, Total: ${totalPrice}, isValidUnitPrice: ${isValidUnitPrice}, isValidTotalPrice: ${isValidTotalPrice}, isValidDescription: ${isValidDescription}`)
+          }
         }
       }
       
