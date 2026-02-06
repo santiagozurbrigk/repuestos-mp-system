@@ -408,7 +408,9 @@ function parseInvoiceText(text) {
   
   for (let i = 0; i < Math.min(20, lines.length); i++) {
     const line = lines[i]
-    logger.debug(`Línea ${i}: ${line.substring(0, 80)}`)
+    if (i < 10) { // Solo loggear las primeras 10 líneas para no saturar
+      logger.info(`Línea ${i}: ${line.substring(0, 80)}`)
+    }
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
@@ -503,7 +505,7 @@ function parseInvoiceText(text) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (line.toLowerCase().includes('factura') || line.toLowerCase().includes('n°') || line.toLowerCase().includes('nro')) {
-      logger.debug(`Línea ${i} (posible factura): ${line}`)
+      logger.info(`Línea ${i} (posible factura): ${line}`)
     }
     const line = lines[i]
     const lineLower = line.toLowerCase()
@@ -865,7 +867,7 @@ function parseInvoiceText(text) {
       const match1 = line.match(tablePattern1)
       
       if (match1) {
-        logger.debug(`Línea ${i} coincide con patrón 1: ${line.substring(0, 100)}`)
+        logger.info(`Línea ${i} coincide con patrón 1: ${line.substring(0, 100)}`)
         const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = match1
         
         // Parsear números con formato argentino (puntos para miles, coma para decimales)

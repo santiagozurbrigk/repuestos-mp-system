@@ -19,8 +19,19 @@ const formatMessage = (level, message, data) => {
 
 export const logger = {
   info: (message, data) => {
+    // Mostrar info siempre (necesario para diagnosticar OCR en producción)
+    const formatted = formatMessage('info', message, data)
+    if (data) {
+      console.log(formatted, data)
+    } else {
+      console.log(formatted)
+    }
+  },
+  
+  debug: (message, data) => {
+    // Debug solo en desarrollo
     if (isDevelopment) {
-      const formatted = formatMessage('info', message, data)
+      const formatted = formatMessage('debug', message, data)
       if (data) {
         console.log(formatted, data)
       } else {
