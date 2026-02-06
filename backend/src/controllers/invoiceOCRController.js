@@ -408,11 +408,11 @@ function parseInvoiceText(text) {
   
   for (let i = 0; i < Math.min(20, lines.length); i++) {
     const line = lines[i]
+    const lineLower = line.toLowerCase()
+    
     if (i < 10) { // Solo loggear las primeras 10 líneas para no saturar
       logger.info(`Línea ${i}: ${line.substring(0, 80)}`)
     }
-    const line = lines[i]
-    const lineLower = line.toLowerCase()
     
     // Buscar línea que contenga palabras clave de proveedor
     if (vendorKeywords.some(kw => lineLower.includes(kw))) {
