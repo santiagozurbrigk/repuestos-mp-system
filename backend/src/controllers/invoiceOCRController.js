@@ -257,6 +257,11 @@ export const processInvoiceImage = async (req, res) => {
     }
 
     // Parsear el texto extraído para encontrar datos de la factura
+    logger.info('Iniciando parsing del texto extraído', { 
+      textLength: extractedText.length,
+      preview: extractedText.substring(0, 500) 
+    })
+    
     const parsedData = parseInvoiceText(extractedText)
     
     logger.info('Datos extraídos de la factura:', {
@@ -266,6 +271,12 @@ export const processInvoiceImage = async (req, res) => {
       dueDate: parsedData.dueDate,
       totalAmount: parsedData.totalAmount,
       itemsCount: parsedData.items.length,
+      itemsPreview: parsedData.items.slice(0, 3).map(item => ({
+        name: item.item_name,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total_price: item.total_price
+      }))
     })
 
     // Buscar o crear proveedor por nombre
@@ -371,6 +382,8 @@ export const processInvoiceImage = async (req, res) => {
  * Esta función usa expresiones regulares y patrones comunes en facturas argentinas
  */
 function parseInvoiceText(text) {
+  logger.info('=== INICIANDO PARSE INVOICE TEXT ===')
+  
   const result = {
     vendorName: null,
     invoiceNumber: null,
@@ -383,13 +396,19 @@ function parseInvoiceText(text) {
   // Normalizar el texto (remover espacios múltiples, normalizar saltos de línea)
   const normalizedText = text.replace(/\s+/g, ' ').trim()
   const lines = text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+  
+  logger.info(`Texto procesado: ${lines.length} líneas encontradas`)
+  logger.info('Primeras 10 líneas:', lines.slice(0, 10))
 
   // 1. Buscar nombre del proveedor (generalmente en las primeras líneas)
+  logger.info('=== BUSCANDO PROVEEDOR ===')
   // Buscar patrones comunes: "RAZÓN SOCIAL", nombre de empresa en mayúsculas, etc.
   const vendorKeywords = ['razón social', 'razon social', 'proveedor', 'vendedor', 'empresa']
   const excludeVendorWords = ['sucursal', 'domicilio', 'localidad', 'tel:', 'email', 'www.', 'http', 'dirección', 'direccion', 'alquimac', 'mar del plata', 'buenos aires']
   
   for (let i = 0; i < Math.min(20, lines.length); i++) {
+    const line = lines[i]
+    logger.debug(`Línea ${i}: ${line.substring(0, 80)}`)
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
@@ -479,8 +498,13 @@ function parseInvoiceText(text) {
   }
 
   // 2. Buscar número de factura
+  logger.info('=== BUSCANDO NÚMERO DE FACTURA ===')
   // Buscar específicamente después de "FACTURA" o "N°" para evitar CUITs
   for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.toLowerCase().includes('factura') || line.toLowerCase().includes('n°') || line.toLowerCase().includes('nro')) {
+      logger.debug(`Línea ${i} (posible factura): ${line}`)
+    }
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
@@ -537,6 +561,7 @@ function parseInvoiceText(text) {
   }
 
   // 3. Buscar fechas
+  logger.info('=== BUSCANDO FECHAS ===')
   // Buscar específicamente "Fecha Emisión" y "Fecha de Vto" o "Vencimiento"
   const datePatterns = [
     /(\d{2}\/\d{2}\/\d{4})/g, // DD/MM/YYYY
@@ -596,6 +621,7 @@ function parseInvoiceText(text) {
   }
 
   // 4. Buscar importe total
+  logger.info('=== BUSCANDO MONTO TOTAL ===')
   // Buscar específicamente la línea "TOTAL" evitando subtotales e impuestos
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
@@ -608,17 +634,23 @@ function parseInvoiceText(text) {
         !lineLower.includes('pibbb') &&
         !lineLower.includes('ingresos brutos')) {
       
+      logger.info(`Línea ${i} con TOTAL encontrada: ${line}`)
+      
       // Buscar número grande en esta línea (debe ser el más grande de la línea)
       const numbers = line.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
       if (numbers && numbers.length > 0) {
+        logger.info(`Números encontrados en línea TOTAL: ${numbers.join(', ')}`)
         // Convertir todos los números y tomar el más grande
         const amounts = numbers
           .map(num => parseFloat(num.replace(/\./g, '').replace(',', '.')))
           .filter(num => num > 1000 && num < 100000000)
           .sort((a, b) => b - a)
         
+        logger.info(`Montos parseados: ${amounts.join(', ')}`)
+        
         if (amounts.length > 0) {
           result.totalAmount = amounts[0]
+          logger.info(`Monto total seleccionado: ${result.totalAmount}`)
           break
         }
       }
@@ -661,6 +693,7 @@ function parseInvoiceText(text) {
   }
 
   // 5. Buscar productos/items
+  logger.info('=== BUSCANDO PRODUCTOS ===')
   // Buscar la tabla de productos identificando encabezados comunes
   const productTableKeywords = [
     'articulo', 'artículo', 'producto', 'descripcion', 'descripción',
@@ -713,7 +746,9 @@ function parseInvoiceText(text) {
     logger.info('Buscando productos sin encabezado claro, analizando todas las líneas')
     
     // Buscar líneas con formato de tabla: texto + números (cantidad/precio)
+    let processedLines = 0
     for (let i = 0; i < lines.length; i++) {
+      processedLines++
       const line = lines[i]
       const lineLower = line.toLowerCase()
       
@@ -830,6 +865,7 @@ function parseInvoiceText(text) {
       const match1 = line.match(tablePattern1)
       
       if (match1) {
+        logger.debug(`Línea ${i} coincide con patrón 1: ${line.substring(0, 100)}`)
         const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = match1
         
         // Parsear números con formato argentino (puntos para miles, coma para decimales)
@@ -911,6 +947,14 @@ function parseInvoiceText(text) {
   }
 
   logger.info(`Items encontrados antes de filtrar: ${result.items.length}`)
+  if (result.items.length > 0) {
+    logger.info('Primeros 5 items encontrados:', result.items.slice(0, 5).map(item => ({
+      name: item.item_name,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      total_price: item.total_price
+    })))
+  }
   
   // Filtrar items duplicados o inválidos
   result.items = result.items.filter((item, index, self) => {
@@ -934,6 +978,24 @@ function parseInvoiceText(text) {
   })
   
   logger.info(`Items después de filtrar: ${result.items.length}`)
+  if (result.items.length > 0) {
+    logger.info('Items finales:', result.items.map(item => ({
+      name: item.item_name,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      total_price: item.total_price
+    })))
+  }
+  
+  logger.info('=== FIN PARSE INVOICE TEXT ===')
+  logger.info('Resumen final:', {
+    vendorName: result.vendorName,
+    invoiceNumber: result.invoiceNumber,
+    invoiceDate: result.invoiceDate,
+    dueDate: result.dueDate,
+    totalAmount: result.totalAmount,
+    itemsCount: result.items.length
+  })
 
   return result
 }
