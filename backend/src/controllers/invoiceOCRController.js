@@ -723,103 +723,96 @@ function parseInvoiceText(text) {
 
   // 4. Buscar importe total
   logger.info('=== BUSCANDO MONTO TOTAL ===')
-  // Buscar específicamente la línea "TOTAL" evitando subtotales e impuestos
+  // Buscar específicamente el total final, que generalmente está al final de la factura
+  // Primero buscar todas las líneas que contengan "TOTAL" y analizar cuál es el total final
+  const totalCandidates = []
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
-    // Buscar línea que diga solo "TOTAL" o "TOTAL:" sin otras palabras como "SUBTOTAL" o "IVA"
+    // Buscar líneas que contengan "TOTAL" pero excluir subtotales e impuestos
     if (lineLower.includes('total') && 
         !lineLower.includes('subtotal') && 
         !lineLower.includes('iva') &&
         !lineLower.includes('pibbb') &&
-        !lineLower.includes('ingresos brutos')) {
-      
+        !lineLower.includes('ingresos brutos') &&
+        !lineLower.includes('bonif') &&
+        !lineLower.includes('dto')) {
+      totalCandidates.push({ index: i, line: line })
       logger.info(`Línea ${i} con TOTAL encontrada: ${line}`)
-      
-      // Buscar número grande en esta línea y en las siguientes 5 líneas (el total puede estar más abajo)
-      let searchLines = [line]
-      for (let j = 1; j <= 5; j++) {
-        if (i + j < lines.length) {
-          searchLines.push(lines[i + j])
-          logger.info(`Línea ${i + j} (después de TOTAL): ${lines[i + j]}`)
-        }
+    }
+  }
+  
+  // Si encontramos candidatos, buscar el total más grande cerca de ellos
+  if (totalCandidates.length > 0) {
+    // Preferir el último candidato (el total final generalmente está al final)
+    const lastCandidate = totalCandidates[totalCandidates.length - 1]
+    const i = lastCandidate.index
+    
+    logger.info(`Analizando candidato de TOTAL en línea ${i}: ${lastCandidate.line}`)
+    
+    // Buscar número grande en esta línea y en las siguientes 15 líneas (el total puede estar más abajo)
+    let searchLines = []
+    for (let j = 0; j <= 15; j++) {
+      if (i + j < lines.length) {
+        const searchLine = lines[i + j]
+        searchLines.push({ line: searchLine, index: i + j })
+        logger.info(`Línea ${i + j} (después de TOTAL): ${searchLine}`)
       }
-      
-      // También buscar en líneas anteriores (a veces el total está antes de la palabra TOTAL)
-      for (let j = 1; j <= 2; j++) {
-        if (i - j >= 0) {
-          searchLines.unshift(lines[i - j])
-          logger.info(`Línea ${i - j} (antes de TOTAL): ${lines[i - j]}`)
-        }
+    }
+    
+    // También buscar en líneas anteriores (a veces el total está antes de la palabra TOTAL)
+    for (let j = 1; j <= 3; j++) {
+      if (i - j >= 0) {
+        const searchLine = lines[i - j]
+        searchLines.unshift({ line: searchLine, index: i - j })
+        logger.info(`Línea ${i - j} (antes de TOTAL): ${searchLine}`)
       }
-      
-      const allNumbers = []
-      for (const searchLine of searchLines) {
-        // Buscar números con formato argentino: puede tener puntos para miles y coma para decimales
-        const numbers = searchLine.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
-        if (numbers) {
-          allNumbers.push(...numbers)
-        }
+    }
+    
+    const allNumbers = []
+    for (const { line: searchLine, index: lineIndex } of searchLines) {
+      // Buscar números con formato argentino: puede tener puntos para miles y coma para decimales
+      const numbers = searchLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/g)
+      if (numbers) {
+        numbers.forEach(num => {
+          allNumbers.push({ num, lineIndex, line: searchLine })
+        })
       }
+    }
+    
+    if (allNumbers.length > 0) {
+      logger.info(`Números encontrados en líneas TOTAL: ${allNumbers.map(n => `${n.num} (línea ${n.lineIndex})`).join(', ')}`)
       
-      if (allNumbers.length > 0) {
-        logger.info(`Números encontrados en líneas TOTAL: ${allNumbers.join(', ')}`)
-        // Convertir todos los números y tomar el más grande
-        const amounts = allNumbers
-          .map(num => {
-            // Parsear formato argentino: puntos para miles, coma para decimales
-            const cleaned = num.replace(/\./g, '').replace(',', '.')
-            const parsed = parseFloat(cleaned) || 0
-            logger.info(`Parseando número: ${num} -> ${parsed}`)
-            return parsed
-          })
-          .filter(num => num > 10000 && num < 100000000) // Filtrar números razonables (más de 10,000)
-          .sort((a, b) => b - a)
-        
-        logger.info(`Montos parseados (después de filtrar > 10000): ${amounts.join(', ')}`)
-        
-        if (amounts.length > 0) {
-          result.totalAmount = amounts[0]
-          logger.info(`Monto total seleccionado: ${result.totalAmount}`)
-          break
+      // Convertir todos los números y filtrar por tamaño razonable
+      const amounts = allNumbers
+        .map(({ num, lineIndex, line }) => {
+          // Parsear formato argentino: puntos para miles, coma para decimales
+          const cleaned = num.replace(/\./g, '').replace(',', '.')
+          const parsed = parseFloat(cleaned) || 0
+          logger.info(`Parseando número: ${num} (línea ${lineIndex}) -> ${parsed}`)
+          return { amount: parsed, lineIndex, line, original: num }
+        })
+        .filter(({ amount }) => amount > 50000 && amount < 100000000) // Filtrar números grandes (más de 50,000)
+        .sort((a, b) => b.amount - a.amount) // Ordenar de mayor a menor
+      
+      logger.info(`Montos parseados (después de filtrar > 50000): ${amounts.map(a => `${a.amount} (línea ${a.lineIndex})`).join(', ')}`)
+      
+      if (amounts.length > 0) {
+        // Preferir el número más grande que esté después de la palabra TOTAL
+        const afterTotal = amounts.filter(a => a.lineIndex >= i)
+        if (afterTotal.length > 0) {
+          result.totalAmount = afterTotal[0].amount
+          logger.info(`Monto total seleccionado (después de TOTAL): ${result.totalAmount} de línea ${afterTotal[0].lineIndex}`)
         } else {
-          logger.warn(`No se encontraron montos válidos (> 10000) en líneas TOTAL. Todos los números: ${allNumbers.join(', ')}`)
-          // Si no encontramos un monto válido, buscar el número más grande en un rango más amplio
-          // Buscar en líneas alrededor de TOTAL (hasta 10 líneas después)
-          const extendedNumbers = []
-          for (let j = 0; j <= 10; j++) {
-            if (i + j < lines.length) {
-              const extendedLine = lines[i + j]
-              const extNumbers = extendedLine.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
-              if (extNumbers) {
-                extendedNumbers.push(...extNumbers)
-              }
-            }
-          }
-          
-          if (extendedNumbers.length > 0) {
-            logger.info(`Buscando en rango extendido, números encontrados: ${extendedNumbers.join(', ')}`)
-            const extendedAmounts = extendedNumbers
-              .map(num => {
-                const cleaned = num.replace(/\./g, '').replace(',', '.')
-                return parseFloat(cleaned) || 0
-              })
-              .filter(num => num > 50000 && num < 100000000) // Buscar números grandes (más de 50,000)
-              .sort((a, b) => b - a)
-            
-            logger.info(`Montos en rango extendido (después de filtrar > 50000): ${extendedAmounts.join(', ')}`)
-            
-            if (extendedAmounts.length > 0) {
-              result.totalAmount = extendedAmounts[0]
-              logger.info(`Monto total seleccionado (rango extendido): ${result.totalAmount}`)
-              break
-            }
-          }
+          result.totalAmount = amounts[0].amount
+          logger.info(`Monto total seleccionado (más grande encontrado): ${result.totalAmount} de línea ${amounts[0].lineIndex}`)
         }
       } else {
-        logger.warn(`No se encontraron números en las líneas TOTAL`)
+        logger.warn(`No se encontraron montos válidos (> 50000) cerca de TOTAL. Todos los números: ${allNumbers.map(n => n.num).join(', ')}`)
       }
+    } else {
+      logger.warn(`No se encontraron números en las líneas TOTAL`)
     }
   }
 
@@ -938,9 +931,21 @@ function parseInvoiceText(text) {
         logger.info(`Línea ${i} (contiene número grande): ${line}`)
       }
       
+      // Excluir líneas que claramente NO son productos:
+      // - Líneas que empiezan con números seguidos de nombres (ej: "220 Chiaia Fabián")
+      // - Líneas que empiezan con guiones y códigos (ej: "-SO-1218124 SO-1219591")
+      // - Líneas muy cortas o que solo contienen números
+      if (/^\d{2,4}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(line) || 
+          /^-\w+-\d+/.test(line) ||
+          line.length < 15 ||
+          /^\d+$/.test(line.trim())) {
+        continue
+      }
+      
       // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL (más flexible)
       // Ejemplo: "MD 24703 BULBO CHEV. CORSA 1 17.083,90 46% 9.225,31"
-      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,25})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,60})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      // Mejorado para capturar mejor los números con formato argentino
+      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,25})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,60})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
       const match1 = line.match(tablePattern1)
       
       if (match1) {
@@ -960,8 +965,14 @@ function parseInvoiceText(text) {
         
         logger.info(`Patrón 1 parseado - Marca: ${marca}, Código: ${codigo}, Desc: ${descripcion}, Cant: ${qty}, PrecioUnit: ${precioUnitStr} -> ${unitPrice}, Total: ${totalStr} -> ${totalPrice}`)
         
-        // Validar que los precios sean razonables (más de 100 y menos de 10 millones)
-        if (unitPrice >= 100 && unitPrice < 10000000 && descripcion.trim().length > 3) {
+        // Validar que los precios sean razonables (más de 1,000 para evitar capturar números pequeños como códigos)
+        // y que la descripción tenga sentido
+        if (unitPrice >= 1000 && unitPrice < 10000000 && 
+            totalPrice >= 1000 && totalPrice < 10000000 &&
+            descripcion.trim().length > 5 &&
+            !descripcion.trim().match(/^\d+$/) &&
+            !descripcion.trim().toLowerCase().includes('chiaia') &&
+            !descripcion.trim().toLowerCase().includes('fabian')) {
           result.items.push({
             item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
             quantity: qty,
@@ -972,19 +983,23 @@ function parseInvoiceText(text) {
           logger.info(`Producto encontrado (patrón 1): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
           continue
         } else {
-          logger.warn(`Producto rechazado por precio inválido (patrón 1): ${descripcion.trim()} - Precio: ${unitPrice}`)
+          logger.warn(`Producto rechazado por precio inválido o descripción inválida (patrón 1): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}`)
         }
       }
       
       // Patrón 2: DESCRIPCION CANT PRECIO TOTAL (sin marca/código)
-      const tablePattern2 = /^([A-ZÁÉÍÓÚÑ\s\.\-]{5,60})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      // Mejorado para capturar números con formato argentino (puntos para miles)
+      const tablePattern2 = /^([A-ZÁÉÍÓÚÑ\s\.\-]{5,60})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
       const match2 = line.match(tablePattern2)
       
       if (match2) {
         const [, descripcion, cantidad, precioUnitStr, totalStr] = match2
         
-        // Verificar que la descripción no sea solo números o fechas
-        if (!/^\d+$/.test(descripcion.trim()) && !/^\d{2}\/\d{2}\/\d{4}/.test(descripcion.trim())) {
+        // Verificar que la descripción no sea solo números, fechas, o nombres de personas
+        if (!/^\d+$/.test(descripcion.trim()) && 
+            !/^\d{2}\/\d{2}\/\d{4}/.test(descripcion.trim()) &&
+            !/^\d{2,4}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(descripcion.trim()) &&
+            descripcion.trim().length > 5) {
           const parseArgentineNumber = (numStr) => {
             if (!numStr) return 0
             const cleaned = numStr.trim().replace(/\./g, '').replace(',', '.')
@@ -995,7 +1010,8 @@ function parseInvoiceText(text) {
           const unitPrice = parseArgentineNumber(precioUnitStr)
           const totalPrice = parseArgentineNumber(totalStr)
           
-          if (unitPrice >= 100 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
+          // Validar que los precios sean razonables (más de 1,000 para evitar capturar números pequeños)
+          if (unitPrice >= 1000 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
             result.items.push({
               item_name: descripcion.trim(),
               quantity: qty,
@@ -1005,6 +1021,8 @@ function parseInvoiceText(text) {
             })
             logger.info(`Producto encontrado (patrón 2): ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
             continue
+          } else {
+            logger.warn(`Producto rechazado por precio inválido (patrón 2): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}`)
           }
         }
       }
@@ -1071,8 +1089,16 @@ function parseInvoiceText(text) {
         const unitPrice = parseArgentineNumber(precioUnitStr)
         const totalPrice = parseArgentineNumber(totalStr)
         
-        // Validar que los precios sean razonables (más de 100 y menos de 10 millones)
-        if (unitPrice >= 100 && unitPrice < 10000000 && descripcion.trim().length > 3) {
+        logger.info(`Patrón 1 parseado (tabla) - Marca: ${marca}, Código: ${codigo}, Desc: ${descripcion}, Cant: ${qty}, PrecioUnit: ${precioUnitStr} -> ${unitPrice}, Total: ${totalStr} -> ${totalPrice}`)
+        
+        // Validar que los precios sean razonables (más de 1,000 para evitar capturar números pequeños como códigos)
+        // y que la descripción tenga sentido
+        if (unitPrice >= 1000 && unitPrice < 10000000 && 
+            totalPrice >= 1000 && totalPrice < 10000000 &&
+            descripcion.trim().length > 5 &&
+            !descripcion.trim().match(/^\d+$/) &&
+            !descripcion.trim().toLowerCase().includes('chiaia') &&
+            !descripcion.trim().toLowerCase().includes('fabian')) {
           result.items.push({
             item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
             quantity: qty,
@@ -1080,27 +1106,38 @@ function parseInvoiceText(text) {
             total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
             description: `Código: ${codigo}`,
           })
-          logger.info(`Producto encontrado (patrón 1): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
+          logger.info(`Producto encontrado (patrón 1 tabla): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
           continue
         } else {
-          logger.warn(`Producto rechazado por precio inválido: ${descripcion.trim()} - Precio: ${unitPrice}`)
+          logger.warn(`Producto rechazado por precio inválido o descripción inválida (tabla): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}`)
         }
       }
       
       // Patrón 2: DESCRIPCION CANT PRECIO (sin marca/código al inicio)
-      const tablePattern2 = /^([A-ZÁÉÍÓÚÑ\s\.]{5,50})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      // Mejorado para capturar números con formato argentino (puntos para miles)
+      const tablePattern2 = /^([A-ZÁÉÍÓÚÑ\s\.\-]{5,50})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
       const match2 = line.match(tablePattern2)
       
       if (match2) {
         const [, descripcion, cantidad, precioUnitStr, totalStr] = match2
         
-        // Verificar que la descripción no sea solo números o fechas
-        if (!/^\d+$/.test(descripcion.trim()) && !/^\d{2}\/\d{2}\/\d{4}/.test(descripcion.trim())) {
-          const qty = parseFloat(cantidad) || 1
-          const unitPrice = parseFloat(precioUnitStr.replace(/\./g, '').replace(',', '.')) || 0
-          const totalPrice = parseFloat(totalStr.replace(/\./g, '').replace(',', '.')) || 0
+        // Verificar que la descripción no sea solo números, fechas, o nombres de personas
+        if (!/^\d+$/.test(descripcion.trim()) && 
+            !/^\d{2}\/\d{2}\/\d{4}/.test(descripcion.trim()) &&
+            !/^\d{2,4}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(descripcion.trim()) &&
+            descripcion.trim().length > 5) {
+          const parseArgentineNumber = (numStr) => {
+            if (!numStr) return 0
+            const cleaned = numStr.trim().replace(/\./g, '').replace(',', '.')
+            return parseFloat(cleaned) || 0
+          }
           
-          if (unitPrice > 0 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
+          const qty = parseFloat(cantidad) || 1
+          const unitPrice = parseArgentineNumber(precioUnitStr)
+          const totalPrice = parseArgentineNumber(totalStr)
+          
+          // Validar que los precios sean razonables (más de 1,000 para evitar capturar números pequeños)
+          if (unitPrice >= 1000 && unitPrice < 10000000 && totalPrice > 0 && totalPrice < 10000000) {
             result.items.push({
               item_name: descripcion.trim(),
               quantity: qty,
@@ -1108,6 +1145,9 @@ function parseInvoiceText(text) {
               total_price: totalPrice || (qty * unitPrice),
               description: null,
             })
+            logger.info(`Producto encontrado (patrón 2 tabla): ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
+          } else {
+            logger.warn(`Producto rechazado por precio inválido (patrón 2 tabla): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}`)
           }
         }
       }
@@ -1150,14 +1190,23 @@ function parseInvoiceText(text) {
   // Filtrar items duplicados o inválidos
   result.items = result.items.filter((item, index, self) => {
     // Eliminar items con nombres muy cortos o que sean claramente metadatos
-    if (item.item_name.length < 3) return false
+    if (item.item_name.length < 5) return false
     
     // Eliminar items que sean claramente campos de encabezado
     const nameLower = item.item_name.toLowerCase()
     if (excludeKeywords.some(kw => nameLower.includes(kw))) return false
     
-    // Eliminar items con precios inválidos
-    if (item.unit_price <= 0 || item.unit_price > 10000000) return false
+    // Eliminar items que contengan nombres de personas o códigos que no son productos
+    if (nameLower.includes('chiaia') || 
+        nameLower.includes('fabian') ||
+        /^\d{2,4}\s+[a-záéíóúñ]/.test(item.item_name) ||
+        /^-\w+-\d+/.test(item.item_name)) {
+      return false
+    }
+    
+    // Eliminar items con precios inválidos (mínimo 1,000 para evitar códigos o números pequeños)
+    if (item.unit_price < 1000 || item.unit_price > 10000000) return false
+    if (item.total_price < 1000 || item.total_price > 10000000) return false
     if (item.quantity <= 0 || item.quantity > 1000) return false
     
     // Eliminar duplicados exactos
