@@ -45,7 +45,9 @@ export const createSupplier = async (req, res) => {
 
 export const getSuppliers = async (req, res) => {
   try {
-    const { limit = 100, offset = 0 } = req.query
+    const { limit = 1000, offset = 0 } = req.query
+
+    logger.info(`Obteniendo proveedores - limit: ${limit}, offset: ${offset}`)
 
     const { data, error } = await supabase
       .from('suppliers')
@@ -55,13 +57,14 @@ export const getSuppliers = async (req, res) => {
 
     if (error) {
       logger.error('Error al obtener proveedores de Supabase:', error)
-      return res.status(500).json({ error: 'Error al obtener los proveedores' })
+      return res.status(500).json({ error: 'Error al obtener los proveedores', details: error.message })
     }
 
-    res.json(data)
+    logger.info(`Proveedores obtenidos exitosamente: ${data?.length || 0} registros`)
+    res.json(data || [])
   } catch (error) {
     logger.error('Error inesperado en getSuppliers:', error)
-    res.status(500).json({ error: 'Error interno del servidor' })
+    res.status(500).json({ error: 'Error interno del servidor', details: error.message })
   }
 }
 

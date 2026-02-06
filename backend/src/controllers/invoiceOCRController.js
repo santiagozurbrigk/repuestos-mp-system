@@ -971,7 +971,6 @@ function parseInvoiceText(text) {
             lineLower.includes('importe en letras') ||
             lineLower.includes('observaciones') ||
             lineLower.includes('forma de pago') ||
-            lineLower.includes('flete bulto') ||
             lineLower.includes('flete bulto')) {
           break
         }
