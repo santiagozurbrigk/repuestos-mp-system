@@ -496,16 +496,7 @@ function parseInvoiceText(text) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
       
-      // Buscar específicamente nombres que contengan "AUTO", "NÁUTICA", "SUR", "SRL"
-      if (lineLower.includes('auto') && (lineLower.includes('náutica') || lineLower.includes('nautica') || lineLower.includes('sur'))) {
-        if (line.length > 10 && line.length < 80 && /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim())) {
-          result.vendorName = line.trim()
-          logger.info(`Proveedor corregido a: ${result.vendorName}`)
-          break
-        }
-      }
-      
-      // Buscar cualquier línea que tenga formato de empresa y no contenga palabras excluidas
+      // Buscar cualquier línea que tenga formato de empresa y no contenga palabras excluidas (genérico)
       if (line.length > 10 &&
           line.length < 80 &&
           /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim()) &&
@@ -526,18 +517,32 @@ function parseInvoiceText(text) {
     }
   }
   
-  // Si no se encontró proveedor, buscar específicamente "Auto Náutica Sur SRL"
+  // Si no se encontró proveedor, buscar en más líneas (genérico, sin palabras específicas)
   if (!result.vendorName) {
-    logger.warn('No se encontró proveedor en las primeras 20 líneas, buscando específicamente')
-    for (let i = 0; i < lines.length; i++) {
+    logger.warn('No se encontró proveedor en las primeras 20 líneas, buscando en más líneas')
+    for (let i = 0; i < Math.min(30, lines.length); i++) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
-      // Buscar específicamente "Auto Náutica Sur SRL" o variaciones
-      if ((lineLower.includes('auto') && lineLower.includes('náutica')) || 
-          (lineLower.includes('auto') && lineLower.includes('nautica'))) {
-        if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.)\b/i)) {
+      
+      // Buscar líneas que tengan formato de empresa (SRL, SA, etc.) y no sean excluidas
+      if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i)) {
+        if (
+          line.length > 10 &&
+          line.length < 80 &&
+          !/^\d+/.test(line) &&
+          !/^\d{2}\/\d{2}\/\d{4}/.test(line) &&
+          !lineLower.includes('factura') &&
+          !lineLower.includes('cuit') &&
+          !lineLower.includes('fecha') &&
+          !excludeVendorWords.some(word => lineLower.includes(word)) &&
+          !lineLower.includes('ventas@') &&
+          !lineLower.includes('www.') &&
+          !lineLower.includes('tel:') &&
+          !lineLower.includes('sucursal') &&
+          !lineLower.includes('domicilio')
+        ) {
           result.vendorName = line.trim()
-          logger.info(`Proveedor encontrado (búsqueda específica): ${result.vendorName} en línea ${i}`)
+          logger.info(`Proveedor encontrado (búsqueda extendida): ${result.vendorName} en línea ${i}`)
           break
         }
       }
@@ -560,8 +565,9 @@ function parseInvoiceText(text) {
     // Buscar líneas que contengan "FACTURA" seguido de número con formato específico
     if (lineLower.includes('factura')) {
       // Buscar patrón: FACTURA A No: 00020-00385324 o FACTURA N°: 00020-00385324
-      // Primero buscar el número completo con guión directamente en la línea
-      const fullNumberMatch = line.match(/(?:factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*)?(\d{1,4}[\s-]\d{4,8})/i)
+      // Buscar el número completo con guión directamente en la línea, preservando ceros iniciales
+      // Patrón mejorado que captura números de 3-5 dígitos antes del guión
+      const fullNumberMatch = line.match(/(?:factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*)?(\d{3,5}[\s-]\d{4,8})/i)
       if (fullNumberMatch) {
         let number = fullNumberMatch[1].replace(/\s/g, '')
         
@@ -731,12 +737,20 @@ function parseInvoiceText(text) {
       
       logger.info(`Línea ${i} con TOTAL encontrada: ${line}`)
       
-      // Buscar número grande en esta línea y en las siguientes 3 líneas (el total puede estar en la línea siguiente)
+      // Buscar número grande en esta línea y en las siguientes 5 líneas (el total puede estar más abajo)
       let searchLines = [line]
-      for (let j = 1; j <= 3; j++) {
+      for (let j = 1; j <= 5; j++) {
         if (i + j < lines.length) {
           searchLines.push(lines[i + j])
           logger.info(`Línea ${i + j} (después de TOTAL): ${lines[i + j]}`)
+        }
+      }
+      
+      // También buscar en líneas anteriores (a veces el total está antes de la palabra TOTAL)
+      for (let j = 1; j <= 2; j++) {
+        if (i - j >= 0) {
+          searchLines.unshift(lines[i - j])
+          logger.info(`Línea ${i - j} (antes de TOTAL): ${lines[i - j]}`)
         }
       }
       
@@ -771,6 +785,37 @@ function parseInvoiceText(text) {
           break
         } else {
           logger.warn(`No se encontraron montos válidos (> 10000) en líneas TOTAL. Todos los números: ${allNumbers.join(', ')}`)
+          // Si no encontramos un monto válido, buscar el número más grande en un rango más amplio
+          // Buscar en líneas alrededor de TOTAL (hasta 10 líneas después)
+          const extendedNumbers = []
+          for (let j = 0; j <= 10; j++) {
+            if (i + j < lines.length) {
+              const extendedLine = lines[i + j]
+              const extNumbers = extendedLine.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
+              if (extNumbers) {
+                extendedNumbers.push(...extNumbers)
+              }
+            }
+          }
+          
+          if (extendedNumbers.length > 0) {
+            logger.info(`Buscando en rango extendido, números encontrados: ${extendedNumbers.join(', ')}`)
+            const extendedAmounts = extendedNumbers
+              .map(num => {
+                const cleaned = num.replace(/\./g, '').replace(',', '.')
+                return parseFloat(cleaned) || 0
+              })
+              .filter(num => num > 50000 && num < 100000000) // Buscar números grandes (más de 50,000)
+              .sort((a, b) => b - a)
+            
+            logger.info(`Montos en rango extendido (después de filtrar > 50000): ${extendedAmounts.join(', ')}`)
+            
+            if (extendedAmounts.length > 0) {
+              result.totalAmount = extendedAmounts[0]
+              logger.info(`Monto total seleccionado (rango extendido): ${result.totalAmount}`)
+              break
+            }
+          }
         }
       } else {
         logger.warn(`No se encontraron números en las líneas TOTAL`)
@@ -883,9 +928,14 @@ function parseInvoiceText(text) {
       const isExcluded = excludeKeywords.some(kw => lineLower.includes(kw))
       if (isExcluded) continue
       
-      // Loggear líneas que parecen productos (tienen texto y números)
-      if (i >= 40 && i <= 60 && /[A-Z]/.test(line) && /\d/.test(line) && line.length > 15) {
+      // Loggear líneas que parecen productos (tienen texto y números) - rango más amplio
+      if (i >= 38 && i <= 70 && /[A-Z]/.test(line) && /\d/.test(line) && line.length > 10) {
         logger.info(`Línea ${i} (posible producto): ${line}`)
+      }
+      
+      // Loggear líneas que tienen números grandes (posibles precios)
+      if (i >= 38 && i <= 70 && line.match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/)) {
+        logger.info(`Línea ${i} (contiene número grande): ${line}`)
       }
       
       // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL (más flexible)
