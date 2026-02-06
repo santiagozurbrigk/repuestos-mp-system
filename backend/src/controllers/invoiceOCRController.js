@@ -400,161 +400,87 @@ function parseInvoiceText(text) {
   logger.info(`Texto procesado: ${lines.length} líneas encontradas`)
   logger.info('Primeras 10 líneas:', lines.slice(0, 10))
 
-  // 1. Buscar nombre del proveedor (generalmente en las primeras líneas)
+  // 1. Buscar nombre del proveedor - ESTRATEGIA GENÉRICA
   logger.info('=== BUSCANDO PROVEEDOR ===')
-  // Buscar patrones comunes: "RAZÓN SOCIAL", nombre de empresa en mayúsculas, etc.
-  const vendorKeywords = ['razón social', 'razon social', 'proveedor', 'vendedor', 'empresa']
-  const excludeVendorWords = [
-    'sucursal', 'domicilio', 'localidad', 'tel:', 'email', 'www.', 'http', 'dirección', 'direccion', 
-    'alquimac', 'mar del plata', 'buenos aires', 'condicion de pago', 'condición de pago', 
-    'fecha vencimiento', 'fecha de vencimiento', 'fecha emisión', 'fecha de emisión',
-    'inicio de actividades', 'ing. brutos', 'ingresos brutos', 'cuit', 'responsable inscripto',
-    'condición de venta', 'condicion de venta', 'sr./es:', 'cliente:', 'domicilio fiscal'
+  // Estrategia: buscar en las primeras 15 líneas líneas que:
+  // 1. Contengan SRL/SA/etc (prioridad máxima)
+  // 2. Sean texto en mayúsculas/mixtas con al menos 3 palabras
+  // 3. No contengan números al inicio, fechas, o palabras de contexto (factura, cuit, fecha, etc.)
+  // 4. No sean direcciones, teléfonos, emails, etc.
+  
+  const excludePatterns = [
+    /^\d+/,  // Empieza con número
+    /^\d{2}[-\/]\d{2}[-\/]\d{4}/,  // Es una fecha
+    /factura/i,
+    /cuit/i,
+    /fecha/i,
+    /vencimiento/i,
+    /inicio de actividades/i,
+    /ing\.?\s*brutos/i,
+    /responsable/i,
+    /inscripto/i,
+    /condicion de pago/i,
+    /sr\.?\/es?:/i,
+    /cliente:/i,
+    /domicilio/i,
+    /localidad/i,
+    /tel:/i,
+    /email/i,
+    /www\./i,
+    /http/i,
+    /sucursal/i,
+    /@/i,  // Contiene email
+    /\|\s*/,  // Contiene pipe (separador de direcciones)
   ]
   
-  for (let i = 0; i < Math.min(20, lines.length); i++) {
-    const line = lines[i]
+  // Primero buscar líneas con SRL/SA/etc en las primeras 15 líneas
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
+    const line = lines[i].trim()
     const lineLower = line.toLowerCase()
     
-    if (i < 10) { // Solo loggear las primeras 10 líneas para no saturar
+    if (i < 10) {
       logger.info(`Línea ${i}: ${line.substring(0, 80)}`)
     }
     
-    // Buscar línea que contenga palabras clave de proveedor
-    if (vendorKeywords.some(kw => lineLower.includes(kw))) {
-      // La siguiente línea o la misma línea puede contener el nombre
-      if (i + 1 < lines.length) {
-        const nextLine = lines[i + 1]
-        const nextLineLower = nextLine.toLowerCase()
-        if (nextLine.length > 5 && 
-            /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(nextLine.trim()) &&
-            !excludeVendorWords.some(word => nextLineLower.includes(word))) {
-          result.vendorName = nextLine.trim()
+    // Si tiene SRL/SA/etc, es muy probable que sea el proveedor
+    if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i)) {
+      // Verificar que no sea una línea excluida
+      const isExcluded = excludePatterns.some(pattern => pattern.test(line))
+      
+      if (!isExcluded && 
+          line.length > 8 && 
+          line.length < 100 &&
+          line.split(/\s+/).length >= 2) {
+        // Limpiar la línea: puede tener información adicional después de |
+        const cleanName = line.split('|')[0].trim()
+        if (cleanName.length > 8) {
+          result.vendorName = cleanName
+          logger.info(`Proveedor encontrado (con SRL/SA) en línea ${i}: ${result.vendorName}`)
           break
         }
       }
     }
-    
-    // Buscar líneas en mayúsculas que parezcan nombres de empresa
-    // Excluir palabras como "SUCURSAL", "DOMICILIO", etc.
-    // Primero verificar si tiene SRL/SA/etc (prioridad alta)
-    if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i)) {
-      // Si tiene SRL/SA/etc, verificar que no sea una línea excluida
-      if (
-        line.length > 10 &&
-        line.length < 80 &&
-        !/^\d+/.test(line) &&
-        !/^\d{2}\/\d{2}\/\d{4}/.test(line) &&
-        !lineLower.includes('factura') &&
-        !lineLower.includes('cuit') &&
-        !lineLower.includes('fecha') &&
-        !excludeVendorWords.some(word => lineLower.includes(word)) &&
-        !lineLower.includes('ventas@') &&
-        !lineLower.includes('www.') &&
-        !lineLower.includes('tel:') &&
-        !lineLower.includes('sucursal') &&
-        !lineLower.includes('domicilio')
-      ) {
-        result.vendorName = line.trim()
-        logger.info(`Proveedor encontrado (con SRL/SA): ${result.vendorName} en línea ${i}`)
-        break
-      }
-    }
-    
-    // Si no tiene SRL/SA, buscar otras líneas que parezcan nombres de empresa
-    if (
-      line.length > 10 &&
-      line.length < 80 &&
-      /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim()) &&
-      !/^\d+/.test(line) &&
-      !/^\d{2}\/\d{2}\/\d{4}/.test(line) &&
-      !lineLower.includes('factura') &&
-      !lineLower.includes('cuit') &&
-      !lineLower.includes('fecha') &&
-      !excludeVendorWords.some(word => lineLower.includes(word)) &&
-        !lineLower.includes('ing. brutos') &&
-        !lineLower.includes('responsable') &&
-        !lineLower.includes('inscripto') &&
-        !lineLower.includes('ventas@') &&
-        !lineLower.includes('www.') &&
-        !lineLower.includes('tel:') &&
-        !lineLower.includes('condicion de pago') &&
-        !lineLower.includes('condición de pago') &&
-        !lineLower.includes('fecha vencimiento') &&
-        !lineLower.includes('inicio de actividades') &&
-        !lineLower.includes('sr./es:') &&
-        !lineLower.includes('cliente:')
-    ) {
-      if (line.split(/\s+/).length >= 3) {
-        // Preferir nombres más largos y que no sean solo ubicaciones
-        if (!result.vendorName || 
-            (line.length > result.vendorName.length && 
-             line.length < 80 &&
-             !lineLower.includes('mar del plata') &&
-             !lineLower.includes('buenos aires'))) {
-          result.vendorName = line.trim()
-          logger.info(`Proveedor candidato encontrado: ${result.vendorName} en línea ${i}`)
-        }
-      }
-    }
   }
   
-  // Si encontramos un nombre pero contiene palabras excluidas, buscar uno mejor antes
-  if (result.vendorName && (result.vendorName.toLowerCase().includes('sucursal') || 
-                            result.vendorName.toLowerCase().includes('alquimac') ||
-                            result.vendorName.toLowerCase().includes('mar del plata'))) {
-    logger.warn(`Proveedor encontrado contiene palabras excluidas: ${result.vendorName}, buscando alternativa`)
-    for (let i = 0; i < Math.min(25, lines.length); i++) {
-      const line = lines[i]
-      const lineLower = line.toLowerCase()
-      
-      // Buscar cualquier línea que tenga formato de empresa y no contenga palabras excluidas (genérico)
-      if (line.length > 10 &&
-          line.length < 80 &&
-          /^[A-ZÁÉÍÓÚÑ\s\.]+$/.test(line.trim()) &&
-          !lineLower.includes('sucursal') &&
-          !lineLower.includes('domicilio') &&
-          !lineLower.includes('localidad') &&
-          !lineLower.includes('tel:') &&
-          !lineLower.includes('email') &&
-          !lineLower.includes('www.') &&
-          !lineLower.includes('alquimac') &&
-          !lineLower.includes('mar del plata') &&
-          (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i) || 
-           line.split(/\s+/).length >= 3)) {
-        result.vendorName = line.trim()
-        logger.info(`Proveedor corregido a: ${result.vendorName}`)
-        break
-      }
-    }
-  }
-  
-  // Si no se encontró proveedor, buscar en más líneas (genérico, sin palabras específicas)
+  // Si no encontramos con SRL/SA, buscar líneas que parezcan nombres de empresa
   if (!result.vendorName) {
-    logger.warn('No se encontró proveedor en las primeras 20 líneas, buscando en más líneas')
-    for (let i = 0; i < Math.min(30, lines.length); i++) {
-      const line = lines[i]
+    for (let i = 0; i < Math.min(15, lines.length); i++) {
+      const line = lines[i].trim()
       const lineLower = line.toLowerCase()
       
-      // Buscar líneas que tengan formato de empresa (SRL, SA, etc.) y no sean excluidas
-      if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i)) {
-        if (
-          line.length > 10 &&
-          line.length < 80 &&
-          !/^\d+/.test(line) &&
-          !/^\d{2}\/\d{2}\/\d{4}/.test(line) &&
-          !lineLower.includes('factura') &&
-          !lineLower.includes('cuit') &&
-          !lineLower.includes('fecha') &&
-          !excludeVendorWords.some(word => lineLower.includes(word)) &&
-          !lineLower.includes('ventas@') &&
-          !lineLower.includes('www.') &&
-          !lineLower.includes('tel:') &&
-          !lineLower.includes('sucursal') &&
-          !lineLower.includes('domicilio')
-        ) {
-          result.vendorName = line.trim()
-          logger.info(`Proveedor encontrado (búsqueda extendida): ${result.vendorName} en línea ${i}`)
+      // Debe ser texto en mayúsculas/mixtas, con al menos 2 palabras, sin números al inicio
+      if (line.length > 8 && 
+          line.length < 100 &&
+          line.split(/\s+/).length >= 2 &&
+          /^[A-ZÁÉÍÓÚÑ]/.test(line) &&  // Empieza con mayúscula
+          !excludePatterns.some(pattern => pattern.test(line))) {
+        
+        // Limpiar la línea si tiene información adicional
+        const cleanName = line.split('|')[0].trim().split('Tel:')[0].trim()
+        
+        if (cleanName.length > 8 && cleanName.split(/\s+/).length >= 2) {
+          result.vendorName = cleanName
+          logger.info(`Proveedor encontrado (genérico) en línea ${i}: ${result.vendorName}`)
           break
         }
       }
@@ -563,116 +489,69 @@ function parseInvoiceText(text) {
   
   logger.info(`Proveedor final: ${result.vendorName || 'NO ENCONTRADO'}`)
 
-  // 2. Buscar número de factura
+  // 2. Buscar número de factura - ESTRATEGIA GENÉRICA
   logger.info('=== BUSCANDO NÚMERO DE FACTURA ===')
-  // Buscar específicamente después de "FACTURA" o "N°" para evitar CUITs
+  // Estrategia: buscar números con formato de factura (con guión) cerca de la palabra "FACTURA" o "N°"
+  // Formato típico: XXXX-XXXXXXX o XXXX-XXXXXXXX (3-5 dígitos antes del guión, 4-8 después)
+  
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const lineLower = line.toLowerCase()
     
+    // Buscar líneas que contengan "FACTURA" o "N°"
     if (lineLower.includes('factura') || lineLower.includes('n°') || lineLower.includes('nro')) {
       logger.info(`Línea ${i} (posible factura): ${line}`)
-    }
-    
-    // Buscar líneas que contengan "FACTURA" seguido de número con formato específico
-    if (lineLower.includes('factura')) {
-      // Buscar patrón: FACTURA A No: 00020-00385324 o FACTURA N°: 00020-00385324
-      // Buscar el número completo con guión directamente en la línea, preservando ceros iniciales
-      // Patrón mejorado que captura números de 3-5 dígitos antes del guión
-      const fullNumberMatch = line.match(/(?:factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*)?(\d{3,5}[\s-]\d{4,8})/i)
-      if (fullNumberMatch) {
-        let number = fullNumberMatch[1].replace(/\s/g, '')
-        
-        // Verificar que no sea un CUIT (los CUITs tienen formato XX-XXXXXXXX-X)
-        if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
-          result.invoiceNumber = number
-          logger.info(`Número de factura encontrado en línea ${i}: ${number} (de: ${line})`)
-          break
-        } else {
-          logger.info(`Número encontrado pero es CUIT, ignorando: ${number}`)
+      
+      // Buscar número con formato de factura en la misma línea o líneas siguientes (hasta 3 líneas después)
+      for (let j = i; j < Math.min(i + 4, lines.length); j++) {
+        const searchLine = lines[j]
+        // Buscar patrón: número con guión (formato de factura)
+        const numberMatch = searchLine.match(/(\d{1,5}[\s-]\d{4,10})/)
+        if (numberMatch) {
+          let number = numberMatch[1].replace(/\s/g, '')
+          
+          // Verificar que no sea CUIT (formato XX-XXXXXXXX-X)
+          // Verificar que no sea CAEA (13-14 dígitos sin guión o con guión largo)
+          const digitCount = number.replace(/-/g, '').length
+          const isCuit = number.match(/^\d{2}-\d{8}-\d{1}$/)
+          const isCaea = digitCount >= 13 || searchLine.toLowerCase().includes('caea')
+          
+          if (!isCuit && !isCaea && digitCount >= 8 && digitCount <= 15) {
+            result.invoiceNumber = number
+            logger.info(`Número de factura encontrado en línea ${j}: ${number} (cerca de línea ${i})`)
+            break
+          }
         }
       }
       
-      // Si no se encontró con el patrón completo, intentar con el patrón anterior
-      const invoiceMatch = line.match(/factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
-      if (invoiceMatch) {
-        let number = invoiceMatch[1].replace(/\s/g, '')
-        
-        // Si el número no tiene guión pero debería tenerlo, buscar el número completo en la línea
-        if (!number.includes('-') && line.match(/\d{1,4}[\s-]\d{4,8}/)) {
-          const fullMatch = line.match(/(\d{1,4}[\s-]\d{4,8})/)
-          if (fullMatch) {
-            number = fullMatch[1].replace(/\s/g, '')
-          }
-        }
-        
-        // Verificar que no sea un CUIT
-        if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
-          result.invoiceNumber = number
-          logger.info(`Número de factura encontrado (patrón alternativo) en línea ${i}: ${number} (de: ${line})`)
-          break
-        }
-      }
-    }
-    
-    // Buscar formato específico: "N°: 00020-00385324" o "NRO: 00020-00385324"
-    // Excluir CAEA y otros números que no son números de factura
-    if ((lineLower.includes('n°') || lineLower.includes('nro') || lineLower.includes('numero')) && 
-        !lineLower.includes('cuit') &&
-        !lineLower.includes('caea') &&
-        !lineLower.includes('pedido') &&
-        !lineLower.includes('entrega')) {
-      const numberMatch = line.match(/(?:n°|nro|numero)[\s:]*(\d{1,4}[\s-]?\d{4,8})/i)
-      if (numberMatch) {
-        const number = numberMatch[1].replace(/\s/g, '')
-        // Verificar que no sea un CUIT ni CAEA (CAEA tiene 13-14 dígitos)
-        if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length < 13) {
-          result.invoiceNumber = number
-          logger.info(`Número de factura encontrado (alternativo): ${number}`)
-          break
-        }
-      }
+      if (result.invoiceNumber) break
     }
   }
   
-  // Si no se encontró, buscar en el texto normalizado pero excluyendo CUITs
+  // Si no se encontró, buscar cualquier número con formato de factura en las primeras 30 líneas
   if (!result.invoiceNumber) {
-    // Buscar específicamente en líneas que contengan "Factura" y un número después
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; i < Math.min(30, lines.length); i++) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
       
-      if (lineLower.includes('factura') && lineLower.includes('no') && !lineLower.includes('caea')) {
-        // Buscar patrón más específico: "Factura A No: 00020-00385324" o "ORIGINAL A FACTURA N°: 0012-00202816"
-        const specificMatch = line.match(/factura\s+[a-z]?\s*(?:n[°#o]|no|nro)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
-        if (specificMatch) {
-          const number = specificMatch[1].replace(/\s/g, '')
-          // Verificar que no sea un CUIT ni CAEA
-          if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length < 13) {
-            result.invoiceNumber = number
-            logger.info(`Número de factura encontrado (búsqueda específica): ${number}`)
-            break
-          }
-        }
+      // Excluir líneas que claramente no son números de factura
+      if (lineLower.includes('caea') || 
+          lineLower.includes('cuit') || 
+          lineLower.includes('pedido') || 
+          lineLower.includes('entrega')) {
+        continue
       }
-    }
-    
-    // Si aún no se encontró, buscar en texto normalizado pero ser más estricto
-    if (!result.invoiceNumber) {
-      const invoiceNumberPatterns = [
-        /factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i,
-      ]
-
-      for (const pattern of invoiceNumberPatterns) {
-        const match = normalizedText.match(pattern)
-        if (match) {
-          const number = match[1].replace(/\s/g, '')
-          // Excluir CUITs y verificar que tenga formato de factura (al menos 8 dígitos totales)
-          if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length >= 8) {
-            result.invoiceNumber = number
-            logger.info(`Número de factura encontrado (texto normalizado): ${number}`)
-            break
-          }
+      
+      const numberMatch = line.match(/(\d{1,5}[\s-]\d{4,10})/)
+      if (numberMatch) {
+        let number = numberMatch[1].replace(/\s/g, '')
+        const digitCount = number.replace(/-/g, '').length
+        const isCuit = number.match(/^\d{2}-\d{8}-\d{1}$/)
+        
+        if (!isCuit && digitCount >= 8 && digitCount <= 15) {
+          result.invoiceNumber = number
+          logger.info(`Número de factura encontrado (búsqueda genérica) en línea ${i}: ${number}`)
+          break
         }
       }
     }
@@ -1122,13 +1001,14 @@ function parseInvoiceText(text) {
             
             // Buscar descripción (línea con texto largo antes del precio unitario)
             // Buscar desde más cerca del precio total hacia atrás
-            for (let j = i - 1; j >= Math.max(i - 8, tableStartIndex); j--) {
+            // Priorizar líneas más largas que parezcan descripciones de productos
+            for (let j = i - 1; j >= Math.max(i - 10, tableStartIndex); j--) {
               const prevLine = lines[j].trim()
               const prevLineLower = prevLine.toLowerCase()
               
               // Excluir líneas que no son descripciones
               if (prevLine.length > 5 && 
-                  prevLine.length < 80 &&
+                  prevLine.length < 100 &&
                   /[A-ZÁÉÍÓÚÑ]/.test(prevLine) &&
                   !prevLine.match(/^\d+$/) &&
                   !prevLine.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
@@ -1140,8 +1020,11 @@ function parseInvoiceText(text) {
                   !prevLineLower.includes('cliente') &&
                   !prevLineLower.includes('marca') &&
                   !prevLineLower.includes('codigo') &&
+                  !prevLineLower.includes('código') &&
                   !prevLineLower.includes('articulo') &&
+                  !prevLineLower.includes('artículo') &&
                   !prevLineLower.includes('cant') &&
+                  !prevLineLower.includes('cant.') &&
                   !prevLineLower.includes('total') &&
                   !prevLineLower.includes('dto') &&
                   !prevLineLower.includes('bonif') &&
@@ -1149,10 +1032,15 @@ function parseInvoiceText(text) {
                   !prevLineLower.includes('forma de pago') &&
                   !prevLineLower.includes('metodo de pago') &&
                   !prevLineLower.includes('importe en letras') &&
-                  !prevLineLower.includes('observaciones')) {
-                descripcion = prevLine
-                logger.info(`Descripción encontrada en línea ${j}: ${descripcion}`)
-                break
+                  !prevLineLower.includes('observaciones') &&
+                  !prevLineLower.includes('desp. imp.') &&
+                  !prevLineLower.includes('precio unit') &&
+                  !prevLineLower.includes('importe')) {
+                // Preferir descripciones más largas (más probable que sean productos)
+                if (!descripcion || prevLine.length > descripcion.length) {
+                  descripcion = prevLine
+                  logger.info(`Descripción encontrada en línea ${j}: ${descripcion}`)
+                }
               }
             }
             
