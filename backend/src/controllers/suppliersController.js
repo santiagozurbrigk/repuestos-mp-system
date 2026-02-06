@@ -291,7 +291,8 @@ export const getInvoiceById = async (req, res) => {
 
 export const updateInvoice = async (req, res) => {
   try {
-    const { id } = req.params
+    const { invoice_id } = req.params
+    const id = invoice_id // Mantener compatibilidad con código existente
     const {
       supplier_id,
       invoice_number,
@@ -416,7 +417,19 @@ export const updateInvoice = async (req, res) => {
 
 export const deleteInvoice = async (req, res) => {
   try {
-    const { id } = req.params
+    const { invoice_id } = req.params
+    const id = invoice_id // Mantener compatibilidad con código existente
+
+    // Primero eliminar los items asociados a la factura
+    const { error: itemsError } = await supabase
+      .from('supplier_invoice_items')
+      .delete()
+      .eq('invoice_id', id)
+
+    if (itemsError) {
+      logger.error('Error al eliminar items de factura en Supabase:', itemsError)
+      // Continuar aunque falle, intentar eliminar la factura de todas formas
+    }
 
     const { error } = await supabase
       .from('supplier_invoices')

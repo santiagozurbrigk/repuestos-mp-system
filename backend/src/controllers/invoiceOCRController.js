@@ -986,19 +986,31 @@ function parseInvoiceText(text) {
             let precioUnitario = null
             let descuento = null
             
-            // Buscar precio unitario (línea anterior o 2-3 líneas antes)
-            for (let j = Math.max(i - 5, tableStartIndex); j < i; j++) {
+            // Buscar precio unitario (línea anterior o 2-5 líneas antes del total)
+            // El precio unitario generalmente está antes del total en la misma fila de producto
+            for (let j = Math.max(i - 6, tableStartIndex); j < i; j++) {
               const prevLine = lines[j]
               const prevLargeNumber = prevLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
               if (prevLargeNumber) {
                 const prevPrice = parseArgentineNumber(prevLargeNumber[1])
                 // Si es un precio grande pero menor que el total, probablemente es el precio unitario
-                if (prevPrice >= 1000 && prevPrice < totalPrice && prevPrice < 10000000) {
-                  precioUnitario = prevPrice
-                  logger.info(`Precio unitario encontrado en línea ${j}: ${prevLargeNumber[1]} -> ${precioUnitario}`)
-                  break
+                // También puede ser igual o mayor si hay descuentos, pero generalmente es menor
+                if (prevPrice >= 1000 && prevPrice < 10000000) {
+                  // Si el precio anterior es menor que el total, es muy probable que sea el precio unitario
+                  // Si es mayor, podría ser otro total o un error, pero lo aceptamos si está cerca
+                  if (prevPrice < totalPrice || (prevPrice > totalPrice && Math.abs(j - i) <= 3)) {
+                    precioUnitario = prevPrice
+                    logger.info(`Precio unitario encontrado en línea ${j}: ${prevLargeNumber[1]} -> ${precioUnitario} (Total: ${totalPrice})`)
+                    break
+                  }
                 }
               }
+            }
+            
+            // Si no encontramos precio unitario, usar el total como precio unitario (producto único)
+            if (!precioUnitario && totalPrice >= 1000) {
+              precioUnitario = totalPrice
+              logger.info(`No se encontró precio unitario, usando total como precio unitario: ${precioUnitario}`)
             }
             
             // Buscar descripción (línea con texto largo antes del precio unitario)
@@ -1080,17 +1092,21 @@ function parseInvoiceText(text) {
             }
             
             // Si encontramos datos suficientes, crear el producto
-            if (descripcion && precioUnitario && totalPrice >= 1000) {
+            // Aceptar si tenemos descripción y total (el precio unitario es opcional ahora)
+            if (descripcion && totalPrice >= 1000) {
               const productName = marca ? `${marca} ${descripcion}`.trim() : descripcion
+              
+              // Si no encontramos precio unitario, usar el total dividido por la cantidad
+              const finalUnitPrice = precioUnitario || (totalPrice / (cantidad || 1))
               
               result.items.push({
                 item_name: productName,
-                quantity: cantidad,
-                unit_price: precioUnitario,
+                quantity: cantidad || 1,
+                unit_price: finalUnitPrice,
                 total_price: totalPrice,
                 description: codigo ? `Código: ${codigo}` : null,
               })
-              logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad}, Precio Unit: ${precioUnitario}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}`)
+              logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}`)
             } else {
               logger.warn(`❌ Producto incompleto - Desc: ${descripcion || 'N/A'}, PrecioUnit: ${precioUnitario || 'N/A'}, Total: ${totalPrice}`)
             }

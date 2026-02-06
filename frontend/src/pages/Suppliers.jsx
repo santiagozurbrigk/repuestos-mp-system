@@ -182,12 +182,8 @@ export default function Suppliers() {
       [field]: value,
     }
 
-    // Recalcular total_price si cambia quantity o unit_price
-    if (field === 'quantity' || field === 'unit_price') {
-      const quantity = parseFloat(updatedItems[index].quantity || 1)
-      const unitPrice = parseFloat(updatedItems[index].unit_price || 0)
-      updatedItems[index].total_price = quantity * unitPrice
-    }
+    // Ya no recalculamos total_price automáticamente
+    // El usuario ingresa directamente el total_price
 
     setInvoiceItems(updatedItems)
   }
@@ -1135,7 +1131,6 @@ export default function Suppliers() {
                             <tr>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Producto</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-24">Cantidad</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Precio Unit.</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Total</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-16"></th>
                             </tr>
@@ -1167,15 +1162,11 @@ export default function Suppliers() {
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    value={item.unit_price || 0}
-                                    onChange={(e) => handleUpdateInvoiceItem(index, 'unit_price', parseFloat(e.target.value) || 0)}
+                                    value={item.total_price || 0}
+                                    onChange={(e) => handleUpdateInvoiceItem(index, 'total_price', parseFloat(e.target.value) || 0)}
                                     className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                    placeholder="0.00"
                                   />
-                                </td>
-                                <td className="px-3 py-2">
-                                  <span className="text-sm font-medium text-gray-900">
-                                    ${(item.total_price || 0).toFixed(2)}
-                                  </span>
                                 </td>
                                 <td className="px-3 py-2">
                                   <button
@@ -1189,17 +1180,6 @@ export default function Suppliers() {
                               </tr>
                             ))}
                           </tbody>
-                          <tfoot className="bg-gray-50">
-                            <tr>
-                              <td colSpan="3" className="px-3 py-2 text-right text-sm font-semibold text-gray-700">
-                                Total de Productos:
-                              </td>
-                              <td className="px-3 py-2 text-sm font-bold text-gray-900">
-                                ${invoiceItems.reduce((sum, item) => sum + (parseFloat(item.total_price) || 0), 0).toFixed(2)}
-                              </td>
-                              <td></td>
-                            </tr>
-                          </tfoot>
                         </table>
                       </div>
                     </div>

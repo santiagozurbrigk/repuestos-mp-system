@@ -142,26 +142,45 @@ export const createBulkInvoiceItems = async (req, res) => {
     const { invoice_id, items } = req.body
     const userId = req.user.id
 
+    logger.info('createBulkInvoiceItems llamado', { 
+      invoice_id, 
+      itemsCount: items?.length,
+      userId,
+      sampleItem: items?.[0]
+    })
+
     if (!invoice_id || !Array.isArray(items) || items.length === 0) {
+      logger.warn('Validación fallida en createBulkInvoiceItems', { invoice_id, itemsLength: items?.length })
       return res.status(400).json({ error: 'invoice_id y items (array) son requeridos' })
     }
 
     // Preparar items para inserción
-    const itemsToInsert = items.map((item) => {
+    const itemsToInsert = items.map((item, index) => {
       const quantity = parseFloat(item.quantity || 1)
-      const unitPrice = parseFloat(item.unit_price || 0)
-      const totalPrice = item.total_price ? parseFloat(item.total_price) : quantity * unitPrice
+      const totalPrice = item.total_price ? parseFloat(item.total_price) : 0
+      // Si no hay total_price pero hay unit_price, calcularlo
+      // Si no hay ninguno, usar 0
+      const finalTotalPrice = totalPrice > 0 ? totalPrice : (parseFloat(item.unit_price || 0) * quantity)
+      // Calcular unit_price basado en total_price y quantity si no está presente o es 0
+      const unitPrice = (item.unit_price && parseFloat(item.unit_price) > 0) 
+        ? parseFloat(item.unit_price) 
+        : (finalTotalPrice / quantity)
 
-      return {
+      const itemData = {
         invoice_id,
         user_id: userId,
-        item_name: item.item_name || item.name,
+        item_name: item.item_name || item.name || '',
         quantity,
         unit_price: unitPrice,
-        total_price: totalPrice,
+        total_price: finalTotalPrice,
         description: item.description || null,
       }
+
+      logger.info(`Item ${index} preparado:`, itemData)
+      return itemData
     })
+
+    logger.info(`Insertando ${itemsToInsert.length} items en Supabase`)
 
     const { data, error } = await supabase
       .from('supplier_invoice_items')
@@ -169,13 +188,31 @@ export const createBulkInvoiceItems = async (req, res) => {
       .select()
 
     if (error) {
-      logger.error('Error al crear items de factura en bulk en Supabase:', error)
-      return res.status(500).json({ error: 'Error al crear los items de factura' })
+      logger.error('Error al crear items de factura en bulk en Supabase:', {
+        error,
+        errorCode: error.code,
+        errorMessage: error.message,
+        errorDetails: error.details,
+        errorHint: error.hint,
+        itemsToInsert: itemsToInsert.slice(0, 2) // Primeros 2 para debugging
+      })
+      return res.status(500).json({ 
+        error: 'Error al crear los items de factura',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      })
     }
 
+    logger.info(`Items creados exitosamente: ${data?.length || 0}`)
     res.status(201).json(data)
   } catch (error) {
-    logger.error('Error inesperado en createBulkInvoiceItems:', error)
-    res.status(500).json({ error: 'Error interno del servidor' })
+    logger.error('Error inesperado en createBulkInvoiceItems:', {
+      error,
+      errorMessage: error.message,
+      errorStack: error.stack
+    })
+    res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    })
   }
 }
