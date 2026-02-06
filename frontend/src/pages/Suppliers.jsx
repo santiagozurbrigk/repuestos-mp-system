@@ -20,6 +20,8 @@ import {
   Upload,
   Image as ImageIcon,
   Loader2,
+  Camera,
+  X,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -49,6 +51,9 @@ export default function Suppliers() {
   const [extractedData, setExtractedData] = useState(null)
   const [invoiceItems, setInvoiceItems] = useState([])
   const [selectedImage, setSelectedImage] = useState(null)
+  const [cameraActive, setCameraActive] = useState(false)
+  const [stream, setStream] = useState(null)
+  const [capturedImage, setCapturedImage] = useState(null)
   const [supplierFormData, setSupplierFormData] = useState({
     name: '',
     contact_name: '',
@@ -81,9 +86,61 @@ export default function Suppliers() {
     }
   }, [selectedSupplier])
 
+  // Limpiar stream de cámara cuando se cierra el modal
+  useEffect(() => {
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [stream])
 
-  const handleImageUpload = async (e) => {
-    const file = e.target.files?.[0]
+
+  const startCamera = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }, // Usar cámara trasera en móviles
+        audio: false,
+      })
+      setStream(mediaStream)
+      setCameraActive(true)
+      setCapturedImage(null)
+    } catch (err) {
+      console.error('Error al acceder a la cámara:', err)
+      error('No se pudo acceder a la cámara. Asegúrate de dar permisos de cámara.')
+    }
+  }
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop())
+      setStream(null)
+    }
+    setCameraActive(false)
+  }
+
+  const capturePhoto = () => {
+    if (!stream) return
+
+    const video = document.getElementById('camera-video')
+    if (!video) return
+
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(video, 0, 0)
+
+    canvas.toBlob((blob) => {
+      if (blob) {
+        const file = new File([blob], `factura-${Date.now()}.jpg`, { type: 'image/jpeg' })
+        setCapturedImage(file)
+        stopCamera()
+      }
+    }, 'image/jpeg', 0.9)
+  }
+
+  const processImage = async (file) => {
     if (!file) return
 
     // Validar tipo de archivo
@@ -146,6 +203,7 @@ export default function Suppliers() {
         setShowInvoiceImageModal(false)
         setShowInvoiceModal(true)
         setSelectedImage(null)
+        setCapturedImage(null)
 
         success('Factura procesada correctamente. Revisa los datos antes de guardar.')
       }
@@ -159,6 +217,18 @@ export default function Suppliers() {
       }
     } finally {
       setProcessingImage(false)
+    }
+  }
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await processImage(file)
+  }
+
+  const handleUseCapturedImage = () => {
+    if (capturedImage) {
+      processImage(capturedImage)
     }
   }
 
@@ -1223,61 +1293,146 @@ export default function Suppliers() {
       {/* Modal para subir imagen de factura */}
       {showInvoiceImageModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
-            <div className="px-6 py-4 border-b border-gray-200">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
               <h2 className="text-xl font-semibold text-gray-900">Escanear Factura Completa</h2>
+              <button
+                onClick={() => {
+                  stopCamera()
+                  setShowInvoiceImageModal(false)
+                  setSelectedImage(null)
+                  setCapturedImage(null)
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
             <div className="px-6 py-6">
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Selecciona una imagen de la factura
-                </label>
-                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-primary-400 transition-colors">
-                  <div className="space-y-1 text-center">
-                    {selectedImage ? (
-                      <div className="space-y-2">
-                        <ImageIcon className="mx-auto h-12 w-12 text-green-500" />
-                        <div className="text-sm text-gray-600">
-                          <p className="font-medium">{selectedImage.name}</p>
-                          <p className="text-xs text-gray-500">
-                            {(selectedImage.size / 1024 / 1024).toFixed(2)} MB
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedImage(null)}
-                          className="text-xs text-red-600 hover:text-red-700"
-                        >
-                          Cambiar archivo
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <Upload className="mx-auto h-12 w-12 text-gray-400" />
-                        <div className="flex text-sm text-gray-600">
-                          <label
-                            htmlFor="invoice-image-upload"
-                            className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary-500"
-                          >
-                            <span>Sube un archivo</span>
-                            <input
-                              id="invoice-image-upload"
-                              name="invoice-image-upload"
-                              type="file"
-                              accept="image/*,application/pdf"
-                              className="sr-only"
-                              onChange={handleImageUpload}
-                              disabled={processingImage}
-                            />
-                          </label>
-                          <p className="pl-1">o arrastra y suelta</p>
-                        </div>
-                        <p className="text-xs text-gray-500">PNG, JPG, PDF hasta 10MB</p>
-                      </>
-                    )}
+              {/* Opciones: Tomar foto o Subir archivo */}
+              {!cameraActive && !selectedImage && !capturedImage && (
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <button
+                    type="button"
+                    onClick={startCamera}
+                    className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-primary-400 hover:bg-primary-50 transition-colors"
+                  >
+                    <Camera className="w-10 h-10 text-primary-600 mb-2" />
+                    <span className="text-sm font-medium text-gray-700">Tomar Foto</span>
+                    <span className="text-xs text-gray-500 mt-1">Usar cámara</span>
+                  </button>
+                  <label
+                    htmlFor="invoice-image-upload"
+                    className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-primary-400 hover:bg-primary-50 transition-colors cursor-pointer"
+                  >
+                    <Upload className="w-10 h-10 text-primary-600 mb-2" />
+                    <span className="text-sm font-medium text-gray-700">Subir Archivo</span>
+                    <span className="text-xs text-gray-500 mt-1">Desde dispositivo</span>
+                    <input
+                      id="invoice-image-upload"
+                      name="invoice-image-upload"
+                      type="file"
+                      accept="image/*,application/pdf"
+                      capture="environment"
+                      className="sr-only"
+                      onChange={handleImageUpload}
+                      disabled={processingImage}
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* Vista de cámara */}
+              {cameraActive && (
+                <div className="mb-4">
+                  <div className="relative bg-black rounded-lg overflow-hidden">
+                    <video
+                      id="camera-video"
+                      autoPlay
+                      playsInline
+                      className="w-full h-auto max-h-[400px]"
+                      ref={(video) => {
+                        if (video && stream) {
+                          video.srcObject = stream
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="flex justify-center space-x-4 mt-4">
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="px-6 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 flex items-center space-x-2"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Capturar</span>
+                    </button>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* Vista previa de foto capturada */}
+              {capturedImage && !cameraActive && (
+                <div className="mb-4">
+                  <div className="relative bg-gray-100 rounded-lg overflow-hidden">
+                    <img
+                      src={URL.createObjectURL(capturedImage)}
+                      alt="Foto capturada"
+                      className="w-full h-auto max-h-[400px] object-contain"
+                    />
+                  </div>
+                  <div className="flex justify-center space-x-4 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCapturedImage(null)
+                        startCamera()
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      Volver a tomar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleUseCapturedImage}
+                      className="px-6 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+                    >
+                      Usar esta foto
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Vista de archivo subido */}
+              {selectedImage && !cameraActive && !capturedImage && (
+                <div className="mb-4">
+                  <div className="flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg">
+                    <div className="space-y-2 text-center">
+                      <ImageIcon className="mx-auto h-12 w-12 text-green-500" />
+                      <div className="text-sm text-gray-600">
+                        <p className="font-medium">{selectedImage.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {(selectedImage.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImage(null)}
+                        className="text-xs text-red-600 hover:text-red-700"
+                      >
+                        Cambiar archivo
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {processingImage && (
                 <div className="flex items-center justify-center space-x-2 text-blue-600 py-4">
@@ -1298,19 +1453,13 @@ export default function Suppliers() {
                   >
                     Cancelar
                   </button>
-                  <label
-                    htmlFor="invoice-image-upload-retry"
-                    className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-green-600 to-green-700 rounded-lg hover:from-green-700 hover:to-green-800 cursor-pointer"
+                  <button
+                    type="button"
+                    onClick={() => processImage(selectedImage)}
+                    className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
                   >
                     Procesar Factura
-                    <input
-                      id="invoice-image-upload-retry"
-                      type="file"
-                      accept="image/*,application/pdf"
-                      className="sr-only"
-                      onChange={handleImageUpload}
-                    />
-                  </label>
+                  </button>
                 </div>
               )}
             </div>
