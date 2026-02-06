@@ -525,6 +525,26 @@ function parseInvoiceText(text) {
       }
     }
   }
+  
+  // Si no se encontró proveedor, buscar específicamente "Auto Náutica Sur SRL"
+  if (!result.vendorName) {
+    logger.warn('No se encontró proveedor en las primeras 20 líneas, buscando específicamente')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const lineLower = line.toLowerCase()
+      // Buscar específicamente "Auto Náutica Sur SRL" o variaciones
+      if ((lineLower.includes('auto') && lineLower.includes('náutica')) || 
+          (lineLower.includes('auto') && lineLower.includes('nautica'))) {
+        if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.)\b/i)) {
+          result.vendorName = line.trim()
+          logger.info(`Proveedor encontrado (búsqueda específica): ${result.vendorName} en línea ${i}`)
+          break
+        }
+      }
+    }
+  }
+  
+  logger.info(`Proveedor final: ${result.vendorName || 'NO ENCONTRADO'}`)
 
   // 2. Buscar número de factura
   logger.info('=== BUSCANDO NÚMERO DE FACTURA ===')
