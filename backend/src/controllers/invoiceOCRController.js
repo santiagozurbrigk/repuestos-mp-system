@@ -404,7 +404,13 @@ function parseInvoiceText(text) {
   logger.info('=== BUSCANDO PROVEEDOR ===')
   // Buscar patrones comunes: "RAZÓN SOCIAL", nombre de empresa en mayúsculas, etc.
   const vendorKeywords = ['razón social', 'razon social', 'proveedor', 'vendedor', 'empresa']
-  const excludeVendorWords = ['sucursal', 'domicilio', 'localidad', 'tel:', 'email', 'www.', 'http', 'dirección', 'direccion', 'alquimac', 'mar del plata', 'buenos aires']
+  const excludeVendorWords = [
+    'sucursal', 'domicilio', 'localidad', 'tel:', 'email', 'www.', 'http', 'dirección', 'direccion', 
+    'alquimac', 'mar del plata', 'buenos aires', 'condicion de pago', 'condición de pago', 
+    'fecha vencimiento', 'fecha de vencimiento', 'fecha emisión', 'fecha de emisión',
+    'inicio de actividades', 'ing. brutos', 'ingresos brutos', 'cuit', 'responsable inscripto',
+    'condición de venta', 'condicion de venta', 'sr./es:', 'cliente:', 'domicilio fiscal'
+  ]
   
   for (let i = 0; i < Math.min(20, lines.length); i++) {
     const line = lines[i]
@@ -466,12 +472,18 @@ function parseInvoiceText(text) {
       !lineLower.includes('cuit') &&
       !lineLower.includes('fecha') &&
       !excludeVendorWords.some(word => lineLower.includes(word)) &&
-      !lineLower.includes('ing. brutos') &&
-      !lineLower.includes('responsable') &&
-      !lineLower.includes('inscripto') &&
-      !lineLower.includes('ventas@') &&
-      !lineLower.includes('www.') &&
-      !lineLower.includes('tel:')
+        !lineLower.includes('ing. brutos') &&
+        !lineLower.includes('responsable') &&
+        !lineLower.includes('inscripto') &&
+        !lineLower.includes('ventas@') &&
+        !lineLower.includes('www.') &&
+        !lineLower.includes('tel:') &&
+        !lineLower.includes('condicion de pago') &&
+        !lineLower.includes('condición de pago') &&
+        !lineLower.includes('fecha vencimiento') &&
+        !lineLower.includes('inicio de actividades') &&
+        !lineLower.includes('sr./es:') &&
+        !lineLower.includes('cliente:')
     ) {
       if (line.split(/\s+/).length >= 3) {
         // Preferir nombres más largos y que no sean solo ubicaciones
@@ -604,13 +616,17 @@ function parseInvoiceText(text) {
     }
     
     // Buscar formato específico: "N°: 00020-00385324" o "NRO: 00020-00385324"
+    // Excluir CAEA y otros números que no son números de factura
     if ((lineLower.includes('n°') || lineLower.includes('nro') || lineLower.includes('numero')) && 
-        !lineLower.includes('cuit')) {
+        !lineLower.includes('cuit') &&
+        !lineLower.includes('caea') &&
+        !lineLower.includes('pedido') &&
+        !lineLower.includes('entrega')) {
       const numberMatch = line.match(/(?:n°|nro|numero)[\s:]*(\d{1,4}[\s-]?\d{4,8})/i)
       if (numberMatch) {
         const number = numberMatch[1].replace(/\s/g, '')
-        // Verificar que no sea un CUIT
-        if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
+        // Verificar que no sea un CUIT ni CAEA (CAEA tiene 13-14 dígitos)
+        if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length < 13) {
           result.invoiceNumber = number
           logger.info(`Número de factura encontrado (alternativo): ${number}`)
           break
@@ -626,12 +642,13 @@ function parseInvoiceText(text) {
       const line = lines[i]
       const lineLower = line.toLowerCase()
       
-      if (lineLower.includes('factura') && lineLower.includes('no')) {
-        // Buscar patrón más específico: "Factura A No: 00020-00385324"
-        const specificMatch = line.match(/factura\s+[a-z]?\s*no\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
+      if (lineLower.includes('factura') && lineLower.includes('no') && !lineLower.includes('caea')) {
+        // Buscar patrón más específico: "Factura A No: 00020-00385324" o "ORIGINAL A FACTURA N°: 0012-00202816"
+        const specificMatch = line.match(/factura\s+[a-z]?\s*(?:n[°#o]|no|nro)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
         if (specificMatch) {
           const number = specificMatch[1].replace(/\s/g, '')
-          if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
+          // Verificar que no sea un CUIT ni CAEA
+          if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length < 13) {
             result.invoiceNumber = number
             logger.info(`Número de factura encontrado (búsqueda específica): ${number}`)
             break
@@ -911,27 +928,76 @@ function parseInvoiceText(text) {
     let tableHeaderFound = false
     let tableStartIndex = -1
     
-    // Buscar encabezados de tabla (MARCA, CODIGO, ARTICULO, CANT, P. UNIT, DTO, TOTAL)
+    // Buscar encabezados de tabla - múltiples estructuras posibles
+    // Estructura 1: MARCA, CODIGO, ARTICULO, CANT, P. UNIT, DTO, TOTAL
+    // Estructura 2: CANT., ARTICULO, DESCRIPCION, DESP. IMP., PRECIO UNIT., IMPORTE
+    // Estructura 3: CANT, ARTICULO, DESCRIPCION, PRECIO UNIT., IMPORTE
+    
     for (let i = 0; i < lines.length; i++) {
       const lineLower = lines[i].toLowerCase()
+      const line = lines[i]
+      
+      // Estructura 1: MARCA + CODIGO + ARTICULO
       if (lineLower.includes('marca') && lineLower.includes('codigo') && lineLower.includes('articulo')) {
         tableHeaderFound = true
         tableStartIndex = i + 1
-        logger.info(`Encabezado de tabla encontrado en línea ${i}: ${lines[i]}`)
+        logger.info(`Encabezado de tabla encontrado (estructura 1) en línea ${i}: ${line}`)
         break
+      }
+      
+      // Estructura 2: CANT + ARTICULO + DESCRIPCION + PRECIO UNIT + IMPORTE
+      if ((lineLower.includes('cant') || lineLower.includes('cant.')) && 
+          (lineLower.includes('articulo') || lineLower.includes('artículo')) &&
+          (lineLower.includes('descripcion') || lineLower.includes('descripción')) &&
+          (lineLower.includes('precio unit') || lineLower.includes('precio unit.') || lineLower.includes('importe'))) {
+        tableHeaderFound = true
+        tableStartIndex = i + 1
+        logger.info(`Encabezado de tabla encontrado (estructura 2) en línea ${i}: ${line}`)
+        break
+      }
+      
+      // Estructura 3: CANT + ARTICULO + DESCRIPCION (más flexible)
+      if ((lineLower.includes('cant') || lineLower.includes('cant.')) && 
+          (lineLower.includes('articulo') || lineLower.includes('artículo')) &&
+          (lineLower.includes('descripcion') || lineLower.includes('descripción'))) {
+        // Verificar que las siguientes líneas tengan números (productos)
+        let hasProductsAfter = false
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          if (lines[j].match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/)) {
+            hasProductsAfter = true
+            break
+          }
+        }
+        if (hasProductsAfter) {
+          tableHeaderFound = true
+          tableStartIndex = i + 1
+          logger.info(`Encabezado de tabla encontrado (estructura 3) en línea ${i}: ${line}`)
+          break
+        }
       }
     }
     
-    // Si encontramos el encabezado, buscar las columnas individuales
+    // Si encontramos el encabezado, buscar las columnas individuales (método alternativo)
     if (!tableHeaderFound) {
       for (let i = 0; i < lines.length; i++) {
         const lineLower = lines[i].toLowerCase()
-        if (lineLower === 'marca' || lineLower === 'codigo' || lineLower === 'articulo') {
+        // Buscar cualquier combinación de encabezados comunes
+        if (lineLower === 'marca' || lineLower === 'codigo' || lineLower === 'articulo' ||
+            lineLower === 'cant' || lineLower === 'cant.' || 
+            lineLower === 'descripcion' || lineLower === 'descripción' ||
+            lineLower === 'precio unit' || lineLower === 'precio unit.' ||
+            lineLower === 'importe' || lineLower === 'total') {
           // Buscar si las siguientes líneas contienen los otros encabezados
           let foundHeaders = [lineLower]
           for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
             const nextLineLower = lines[j].toLowerCase().trim()
-            if (nextLineLower === 'cant' || nextLineLower === 'p. unit' || nextLineLower === 'dto' || nextLineLower === 'total' || nextLineLower === 'articulo' || nextLineLower === 'codigo') {
+            if (nextLineLower === 'cant' || nextLineLower === 'cant.' ||
+                nextLineLower === 'p. unit' || nextLineLower === 'precio unit' || nextLineLower === 'precio unit.' ||
+                nextLineLower === 'dto' || nextLineLower === 'total' || 
+                nextLineLower === 'articulo' || nextLineLower === 'artículo' ||
+                nextLineLower === 'codigo' || nextLineLower === 'código' ||
+                nextLineLower === 'descripcion' || nextLineLower === 'descripción' ||
+                nextLineLower === 'importe' || nextLineLower === 'marca') {
               foundHeaders.push(nextLineLower)
             }
           }
