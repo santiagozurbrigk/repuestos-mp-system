@@ -443,11 +443,18 @@ function parseInvoiceText(text) {
       !excludeVendorWords.some(word => lineLower.includes(word)) &&
       !lineLower.includes('ing. brutos') &&
       !lineLower.includes('responsable') &&
-      !lineLower.includes('inscripto')
+      !lineLower.includes('inscripto') &&
+      !lineLower.includes('ventas@') &&
+      !lineLower.includes('www.') &&
+      !lineLower.includes('tel:')
     ) {
       // Verificar que contenga palabras que parezcan nombre de empresa (SRL, SA, etc.)
-      if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i) || 
-          line.split(/\s+/).length >= 2) {
+      if (line.match(/\b(SRL|SA|S\.A\.|S\.R\.L\.|LTDA|INC)\b/i)) {
+        // Si tiene SRL/SA/etc, es muy probable que sea el proveedor
+        result.vendorName = line.trim()
+        logger.info(`Proveedor encontrado (con SRL/SA): ${result.vendorName} en línea ${i}`)
+        break
+      } else if (line.split(/\s+/).length >= 3) {
         // Preferir nombres más largos y que no sean solo ubicaciones
         if (!result.vendorName || 
             (line.length > result.vendorName.length && 
@@ -455,6 +462,7 @@ function parseInvoiceText(text) {
              !lineLower.includes('mar del plata') &&
              !lineLower.includes('buenos aires'))) {
           result.vendorName = line.trim()
+          logger.info(`Proveedor candidato encontrado: ${result.vendorName} en línea ${i}`)
         }
       }
     }
@@ -512,15 +520,18 @@ function parseInvoiceText(text) {
     
     // Buscar líneas que contengan "FACTURA" seguido de número con formato específico
     if (lineLower.includes('factura')) {
-      // Buscar patrón: FACTURA N°: 00020-00385324 o FACTURA A N°: 00020-00385324
-      const invoiceMatch = line.match(/(?:factura\s+[a-z]?\s*)?n[°#]?\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
+      // Buscar patrón: FACTURA A No: 00020-00385324 o FACTURA N°: 00020-00385324
+      // El patrón debe manejar "No:" (con "o" minúscula) y "N°"
+      const invoiceMatch = line.match(/factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
       if (invoiceMatch) {
         const number = invoiceMatch[1].replace(/\s/g, '')
         // Verificar que no sea un CUIT (los CUITs tienen formato XX-XXXXXXXX-X)
         if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
           result.invoiceNumber = number
-          logger.info(`Número de factura encontrado: ${number}`)
+          logger.info(`Número de factura encontrado en línea ${i}: ${number} (de: ${line})`)
           break
+        } else {
+          logger.info(`Número encontrado pero es CUIT, ignorando: ${number}`)
         }
       }
     }
@@ -543,20 +554,41 @@ function parseInvoiceText(text) {
   
   // Si no se encontró, buscar en el texto normalizado pero excluyendo CUITs
   if (!result.invoiceNumber) {
-    const invoiceNumberPatterns = [
-      /(?:factura\s+[a-z]?\s*)?n[°#]?\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i,
-      /(?:n°|nro|numero)[\s:]*(\d{1,4}[\s-]?\d{4,8})/i,
-    ]
+    // Buscar específicamente en líneas que contengan "Factura" y un número después
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const lineLower = line.toLowerCase()
+      
+      if (lineLower.includes('factura') && lineLower.includes('no')) {
+        // Buscar patrón más específico: "Factura A No: 00020-00385324"
+        const specificMatch = line.match(/factura\s+[a-z]?\s*no\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
+        if (specificMatch) {
+          const number = specificMatch[1].replace(/\s/g, '')
+          if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
+            result.invoiceNumber = number
+            logger.info(`Número de factura encontrado (búsqueda específica): ${number}`)
+            break
+          }
+        }
+      }
+    }
+    
+    // Si aún no se encontró, buscar en texto normalizado pero ser más estricto
+    if (!result.invoiceNumber) {
+      const invoiceNumberPatterns = [
+        /factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i,
+      ]
 
-    for (const pattern of invoiceNumberPatterns) {
-      const match = normalizedText.match(pattern)
-      if (match) {
-        const number = match[1].replace(/\s/g, '')
-        // Excluir CUITs y verificar que tenga formato de factura (al menos 8 dígitos totales)
-        if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length >= 8) {
-          result.invoiceNumber = number
-          logger.info(`Número de factura encontrado (texto normalizado): ${number}`)
-          break
+      for (const pattern of invoiceNumberPatterns) {
+        const match = normalizedText.match(pattern)
+        if (match) {
+          const number = match[1].replace(/\s/g, '')
+          // Excluir CUITs y verificar que tenga formato de factura (al menos 8 dígitos totales)
+          if (!number.match(/^\d{2}-\d{8}-\d{1}$/) && number.replace(/-/g, '').length >= 8) {
+            result.invoiceNumber = number
+            logger.info(`Número de factura encontrado (texto normalizado): ${number}`)
+            break
+          }
         }
       }
     }
@@ -638,14 +670,29 @@ function parseInvoiceText(text) {
       
       logger.info(`Línea ${i} con TOTAL encontrada: ${line}`)
       
-      // Buscar número grande en esta línea (debe ser el más grande de la línea)
-      const numbers = line.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
-      if (numbers && numbers.length > 0) {
-        logger.info(`Números encontrados en línea TOTAL: ${numbers.join(', ')}`)
+      // Buscar número grande en esta línea y en las siguientes 2 líneas (el total puede estar en la línea siguiente)
+      let searchLines = [line]
+      if (i + 1 < lines.length) searchLines.push(lines[i + 1])
+      if (i + 2 < lines.length) searchLines.push(lines[i + 2])
+      
+      const allNumbers = []
+      for (const searchLine of searchLines) {
+        const numbers = searchLine.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/g)
+        if (numbers) {
+          allNumbers.push(...numbers)
+        }
+      }
+      
+      if (allNumbers.length > 0) {
+        logger.info(`Números encontrados en líneas TOTAL: ${allNumbers.join(', ')}`)
         // Convertir todos los números y tomar el más grande
-        const amounts = numbers
-          .map(num => parseFloat(num.replace(/\./g, '').replace(',', '.')))
-          .filter(num => num > 1000 && num < 100000000)
+        const amounts = allNumbers
+          .map(num => {
+            // Parsear formato argentino: puntos para miles, coma para decimales
+            const cleaned = num.replace(/\./g, '').replace(',', '.')
+            return parseFloat(cleaned) || 0
+          })
+          .filter(num => num > 10000 && num < 100000000) // Filtrar números razonables (más de 10,000)
           .sort((a, b) => b - a)
         
         logger.info(`Montos parseados: ${amounts.join(', ')}`)
@@ -765,25 +812,40 @@ function parseInvoiceText(text) {
       if (isExcluded) continue
       
       // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL (más flexible)
-      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,25})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,50})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
+      // Ejemplo: "MD 24703 BULBO CHEV. CORSA 1 17.083,90 46% 9.225,31"
+      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,25})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,60})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)$/
       const match1 = line.match(tablePattern1)
       
       if (match1) {
+        logger.info(`Línea ${i} coincide con patrón 1: ${line.substring(0, 100)}`)
         const [, marca, codigo, descripcion, cantidad, precioUnitStr, totalStr] = match1
         
-        const qty = parseFloat(cantidad) || 1
-        const unitPrice = parseFloat(precioUnitStr.replace(/\./g, '').replace(',', '.')) || 0
-        const totalPrice = parseFloat(totalStr.replace(/\./g, '').replace(',', '.')) || 0
+        const parseArgentineNumber = (numStr) => {
+          if (!numStr) return 0
+          // Remover puntos (separadores de miles) y reemplazar coma por punto para decimales
+          const cleaned = numStr.trim().replace(/\./g, '').replace(',', '.')
+          return parseFloat(cleaned) || 0
+        }
         
-        if (unitPrice > 0 && unitPrice < 10000000 && descripcion.trim().length > 3) {
+        const qty = parseFloat(cantidad) || 1
+        const unitPrice = parseArgentineNumber(precioUnitStr)
+        const totalPrice = parseArgentineNumber(totalStr)
+        
+        logger.info(`Patrón 1 parseado - Marca: ${marca}, Código: ${codigo}, Desc: ${descripcion}, Cant: ${qty}, PrecioUnit: ${precioUnitStr} -> ${unitPrice}, Total: ${totalStr} -> ${totalPrice}`)
+        
+        // Validar que los precios sean razonables (más de 100 y menos de 10 millones)
+        if (unitPrice >= 100 && unitPrice < 10000000 && descripcion.trim().length > 3) {
           result.items.push({
             item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
             quantity: qty,
             unit_price: unitPrice,
-            total_price: totalPrice || (qty * unitPrice),
+            total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
             description: `Código: ${codigo}`,
           })
+          logger.info(`Producto encontrado (patrón 1): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
           continue
+        } else {
+          logger.warn(`Producto rechazado por precio inválido (patrón 1): ${descripcion.trim()} - Precio: ${unitPrice}`)
         }
       }
       
