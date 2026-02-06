@@ -560,7 +560,22 @@ function parseInvoiceText(text) {
     // Buscar líneas que contengan "FACTURA" seguido de número con formato específico
     if (lineLower.includes('factura')) {
       // Buscar patrón: FACTURA A No: 00020-00385324 o FACTURA N°: 00020-00385324
-      // El patrón debe capturar el número completo incluyendo el guión
+      // Primero buscar el número completo con guión directamente en la línea
+      const fullNumberMatch = line.match(/(?:factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*)?(\d{1,4}[\s-]\d{4,8})/i)
+      if (fullNumberMatch) {
+        let number = fullNumberMatch[1].replace(/\s/g, '')
+        
+        // Verificar que no sea un CUIT (los CUITs tienen formato XX-XXXXXXXX-X)
+        if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
+          result.invoiceNumber = number
+          logger.info(`Número de factura encontrado en línea ${i}: ${number} (de: ${line})`)
+          break
+        } else {
+          logger.info(`Número encontrado pero es CUIT, ignorando: ${number}`)
+        }
+      }
+      
+      // Si no se encontró con el patrón completo, intentar con el patrón anterior
       const invoiceMatch = line.match(/factura\s+[a-z]?\s*(?:n[°#o]|no|nro|numero)\s*:?\s*(\d{1,4}[\s-]?\d{4,8})/i)
       if (invoiceMatch) {
         let number = invoiceMatch[1].replace(/\s/g, '')
@@ -573,13 +588,11 @@ function parseInvoiceText(text) {
           }
         }
         
-        // Verificar que no sea un CUIT (los CUITs tienen formato XX-XXXXXXXX-X)
+        // Verificar que no sea un CUIT
         if (!number.match(/^\d{2}-\d{8}-\d{1}$/)) {
           result.invoiceNumber = number
-          logger.info(`Número de factura encontrado en línea ${i}: ${number} (de: ${line})`)
+          logger.info(`Número de factura encontrado (patrón alternativo) en línea ${i}: ${number} (de: ${line})`)
           break
-        } else {
-          logger.info(`Número encontrado pero es CUIT, ignorando: ${number}`)
         }
       }
     }
