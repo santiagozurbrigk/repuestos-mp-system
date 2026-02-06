@@ -157,26 +157,80 @@ export const createBulkInvoiceItems = async (req, res) => {
     // Preparar items para inserción
     const itemsToInsert = items.map((item, index) => {
       const quantity = parseFloat(item.quantity || 1)
-      const totalPrice = item.total_price ? parseFloat(item.total_price) : 0
-      // Si no hay total_price pero hay unit_price, calcularlo
-      // Si no hay ninguno, usar 0
-      const finalTotalPrice = totalPrice > 0 ? totalPrice : (parseFloat(item.unit_price || 0) * quantity)
-      // Calcular unit_price basado en total_price y quantity si no está presente o es 0
-      const unitPrice = (item.unit_price && parseFloat(item.unit_price) > 0) 
+      
+      // Validar que quantity sea válido
+      if (isNaN(quantity) || quantity <= 0) {
+        logger.warn(`Item ${index} tiene cantidad inválida: ${item.quantity}, usando 1`)
+        quantity = 1
+      }
+      
+      // Intentar obtener total_price del item
+      const totalPriceRaw = item.total_price !== undefined && item.total_price !== null 
+        ? parseFloat(item.total_price) 
+        : null
+      
+      // Intentar obtener unit_price del item
+      const unitPriceRaw = item.unit_price !== undefined && item.unit_price !== null 
         ? parseFloat(item.unit_price) 
-        : (finalTotalPrice / quantity)
+        : null
+      
+      // Calcular valores finales
+      let finalTotalPrice = 0
+      let finalUnitPrice = 0
+      
+      // Si tenemos total_price válido, usarlo
+      if (totalPriceRaw !== null && !isNaN(totalPriceRaw) && totalPriceRaw > 0) {
+        finalTotalPrice = totalPriceRaw
+        // Calcular unit_price desde total_price si no tenemos unit_price válido
+        if (unitPriceRaw === null || isNaN(unitPriceRaw) || unitPriceRaw <= 0) {
+          finalUnitPrice = finalTotalPrice / quantity
+        } else {
+          finalUnitPrice = unitPriceRaw
+        }
+      } 
+      // Si no tenemos total_price pero sí unit_price, calcular total_price
+      else if (unitPriceRaw !== null && !isNaN(unitPriceRaw) && unitPriceRaw > 0) {
+        finalUnitPrice = unitPriceRaw
+        finalTotalPrice = finalUnitPrice * quantity
+      }
+      // Si no tenemos ninguno, usar 0 (pero esto debería ser raro)
+      else {
+        logger.warn(`Item ${index} no tiene precios válidos, usando 0`, {
+          total_price: item.total_price,
+          unit_price: item.unit_price,
+          item_name: item.item_name
+        })
+        finalTotalPrice = 0
+        finalUnitPrice = 0
+      }
+
+      // Validar que los valores calculados sean válidos
+      if (isNaN(finalTotalPrice) || isNaN(finalUnitPrice)) {
+        logger.error(`Item ${index} tiene valores NaN después del cálculo`, {
+          item,
+          finalTotalPrice,
+          finalUnitPrice,
+          quantity
+        })
+        throw new Error(`Item ${index} tiene valores de precio inválidos`)
+      }
 
       const itemData = {
         invoice_id,
         user_id: userId,
         item_name: item.item_name || item.name || '',
         quantity,
-        unit_price: unitPrice,
+        unit_price: finalUnitPrice,
         total_price: finalTotalPrice,
         description: item.description || null,
       }
 
-      logger.info(`Item ${index} preparado:`, itemData)
+      logger.info(`Item ${index} preparado:`, {
+        item_name: itemData.item_name,
+        quantity: itemData.quantity,
+        unit_price: itemData.unit_price,
+        total_price: itemData.total_price
+      })
       return itemData
     })
 

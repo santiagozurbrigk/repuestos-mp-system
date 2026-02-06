@@ -324,13 +324,24 @@ export default function Suppliers() {
           // Crear nuevos items
           const itemsToSave = invoiceItems
             .filter((item) => item.item_name && item.item_name.trim() !== '')
-            .map((item) => ({
-              item_name: item.item_name,
-              quantity: parseFloat(item.quantity || 1),
-              unit_price: parseFloat(item.unit_price || 0),
-              total_price: parseFloat(item.total_price || 0),
-              description: item.description || null,
-            }))
+            .map((item) => {
+              // Preservar los valores del OCR si existen, de lo contrario usar valores por defecto
+              const quantity = item.quantity ? parseFloat(item.quantity) : 1
+              const unitPrice = item.unit_price !== undefined && item.unit_price !== null 
+                ? parseFloat(item.unit_price) 
+                : undefined
+              const totalPrice = item.total_price !== undefined && item.total_price !== null 
+                ? parseFloat(item.total_price) 
+                : undefined
+              
+              return {
+                item_name: item.item_name,
+                quantity: isNaN(quantity) ? 1 : quantity,
+                unit_price: unitPrice !== undefined && !isNaN(unitPrice) ? unitPrice : undefined,
+                total_price: totalPrice !== undefined && !isNaN(totalPrice) ? totalPrice : undefined,
+                description: item.description || null,
+              }
+            })
 
           if (itemsToSave.length > 0) {
             await api.post('/invoice-items/bulk', {
