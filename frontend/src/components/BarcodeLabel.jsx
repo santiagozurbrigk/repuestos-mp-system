@@ -7,31 +7,18 @@ export default function BarcodeLabel({ item, onClose }) {
 
   useEffect(() => {
     if (barcodeRef.current && item.barcode) {
+      // Usar CODE128 por defecto ya que nuestros códigos generados no son EAN-13 válidos
       try {
-        // Generar código de barras EAN-13
         JsBarcode(barcodeRef.current, item.barcode, {
-          format: 'EAN13',
+          format: 'CODE128',
           width: 2,
-          height: 80,
+          height: 60,
           displayValue: true,
-          fontSize: 16,
-          margin: 10,
+          fontSize: 14,
+          margin: 5,
         })
       } catch (error) {
         console.error('Error al generar código de barras:', error)
-        // Si falla EAN-13 (porque el código no es válido), usar CODE128
-        try {
-          JsBarcode(barcodeRef.current, item.barcode, {
-            format: 'CODE128',
-            width: 2,
-            height: 80,
-            displayValue: true,
-            fontSize: 16,
-            margin: 10,
-          })
-        } catch (err) {
-          console.error('Error al generar código de barras CODE128:', err)
-        }
       }
     }
   }, [item.barcode])
@@ -91,9 +78,12 @@ export default function BarcodeLabel({ item, onClose }) {
               justify-content: center;
               align-items: center;
               flex: 1;
+              overflow: hidden;
+              max-height: 40px;
             }
             svg {
               max-width: 100%;
+              max-height: 40px;
               height: auto;
             }
             .label-footer {
@@ -125,28 +115,17 @@ export default function BarcodeLabel({ item, onClose }) {
               
               if (typeof JsBarcode !== 'undefined' && barcodeValue) {
                 try {
+                  // Usar CODE128 por defecto ya que nuestros códigos generados no son EAN-13 válidos
                   JsBarcode(barcodeEl, barcodeValue, {
-                    format: 'EAN13',
+                    format: 'CODE128',
                     width: 2,
-                    height: 80,
+                    height: 60,
                     displayValue: true,
-                    fontSize: 16,
-                    margin: 10,
+                    fontSize: 14,
+                    margin: 5,
                   });
-                } catch (e) {
-                  // Si falla EAN-13, usar CODE128
-                  try {
-                    JsBarcode(barcodeEl, barcodeValue, {
-                      format: 'CODE128',
-                      width: 2,
-                      height: 80,
-                      displayValue: true,
-                      fontSize: 16,
-                      margin: 10,
-                    });
-                  } catch (err) {
-                    console.error('Error al generar código de barras:', err);
-                  }
+                } catch (err) {
+                  console.error('Error al generar código de barras:', err);
                 }
               }
             })();
@@ -180,19 +159,19 @@ export default function BarcodeLabel({ item, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Vista Previa de Etiqueta</h2>
         
         {/* Vista previa de la etiqueta */}
-        <div className="border-2 border-gray-300 p-4 mb-4 bg-white" style={{ width: '3.5in', height: '1.125in', minHeight: '108px' }}>
+        <div className="border-2 border-gray-300 p-3 mb-4 bg-white overflow-hidden" style={{ width: '3.5in', height: '1.125in', minHeight: '108px', maxHeight: '108px' }}>
           <div className="text-center text-xs font-bold mb-1">ETIQUETA DE PRODUCTO</div>
           <div className="text-center text-xs mb-1 truncate">{item.item_name || ''}</div>
-          {item.code && <div className="text-center text-xs text-gray-600 mb-1">Código: {item.code}</div>}
-          {item.brand && <div className="text-center text-xs text-gray-600 mb-1">Marca: {item.brand}</div>}
-          <div className="flex justify-center items-center flex-1">
-            <svg ref={barcodeRef}></svg>
+          {item.code && <div className="text-center text-xs text-gray-600 mb-0.5">Código: {item.code}</div>}
+          {item.brand && <div className="text-center text-xs text-gray-600 mb-0.5">Marca: {item.brand}</div>}
+          <div className="flex justify-center items-center" style={{ height: '40px', overflow: 'hidden' }}>
+            <svg ref={barcodeRef} style={{ maxWidth: '100%', maxHeight: '40px' }}></svg>
           </div>
-          <div className="text-center text-xs font-bold mt-1">{item.barcode || ''}</div>
+          <div className="text-center text-xs font-bold mt-0.5">{item.barcode || ''}</div>
         </div>
 
         {/* Botones */}
