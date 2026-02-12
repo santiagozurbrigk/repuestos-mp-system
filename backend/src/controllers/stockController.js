@@ -77,12 +77,71 @@ export const confirmPendingItem = async (req, res) => {
       return res.status(400).json({ error: 'El item debe tener un código de barras antes de confirmar' })
     }
 
-    // Verificar si ya existe un item en stock con el mismo código de barras
-    const { data: existingStock } = await supabase
-      .from('stock')
-      .select('*')
-      .eq('barcode', pendingItem.barcode)
-      .single()
+    // Función auxiliar para normalizar strings para comparación
+    const normalizeString = (str) => {
+      if (!str) return null
+      return str.trim().toLowerCase().replace(/\s+/g, ' ')
+    }
+
+    // Función auxiliar para comparar productos
+    const isSameProduct = (item1, item2) => {
+      const name1 = normalizeString(item1.item_name)
+      const name2 = normalizeString(item2.item_name)
+      const code1 = normalizeString(item1.code)
+      const code2 = normalizeString(item2.code)
+      const brand1 = normalizeString(item1.brand)
+      const brand2 = normalizeString(item2.brand)
+
+      // Comparar nombre (debe ser igual)
+      if (name1 !== name2) return false
+
+      // Si ambos tienen código, deben ser iguales
+      if (code1 && code2 && code1 !== code2) return false
+
+      // Si ambos tienen marca, deben ser iguales
+      if (brand1 && brand2 && brand1 !== brand2) return false
+
+      // Si uno tiene código y el otro no, pero tienen el mismo nombre y marca, considerarlos iguales
+      // Si uno tiene marca y el otro no, pero tienen el mismo nombre y código, considerarlos iguales
+      return true
+    }
+
+    // Primero verificar si ya existe un item en stock con el mismo código de barras
+    let existingStock = null
+    if (pendingItem.barcode) {
+      const { data: stockByBarcode } = await supabase
+        .from('stock')
+        .select('*')
+        .eq('barcode', pendingItem.barcode)
+        .single()
+      
+      if (stockByBarcode) {
+        existingStock = stockByBarcode
+        logger.info(`Producto encontrado por código de barras: ${pendingItem.barcode}`)
+      }
+    }
+
+    // Si no se encontró por código de barras, buscar por nombre, código y marca
+    if (!existingStock) {
+      logger.info('Buscando producto por nombre, código y marca...')
+      
+      // Obtener todos los productos del usuario para comparar
+      const { data: allStock, error: fetchStockError } = await supabase
+        .from('stock')
+        .select('*')
+        .eq('user_id', userId)
+
+      if (fetchStockError) {
+        logger.error('Error al obtener stock para comparación:', fetchStockError)
+      } else if (allStock && allStock.length > 0) {
+        // Buscar producto igual por nombre, código y marca
+        existingStock = allStock.find(stockItem => isSameProduct(pendingItem, stockItem))
+        
+        if (existingStock) {
+          logger.info(`Producto encontrado por nombre/código/marca: ${existingStock.item_name}`)
+        }
+      }
+    }
 
     if (existingStock) {
       // Si existe, actualizar la cantidad
@@ -100,6 +159,8 @@ export const confirmPendingItem = async (req, res) => {
         logger.error('Error al actualizar stock existente:', updateError)
         return res.status(500).json({ error: 'Error al actualizar el stock' })
       }
+
+      logger.info(`Cantidad actualizada: ${existingStock.quantity} + ${pendingItem.quantity} = ${updatedStock.quantity}`)
 
       // Eliminar el item pendiente
       await supabase
@@ -127,6 +188,8 @@ export const confirmPendingItem = async (req, res) => {
         logger.error('Error al crear item en stock:', createError)
         return res.status(500).json({ error: 'Error al crear el item en stock' })
       }
+
+      logger.info(`Nuevo producto creado en stock: ${newStock.item_name}`)
 
       // Eliminar el item pendiente
       await supabase

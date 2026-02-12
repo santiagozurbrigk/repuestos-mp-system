@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import api from '../services/api'
 import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../hooks/useConfirm'
+import BarcodeLabel from '../components/BarcodeLabel'
 import {
   Package,
   PackageCheck,
@@ -11,6 +12,7 @@ import {
   Search,
   Plus,
   Minus,
+  Printer,
 } from 'lucide-react'
 
 export default function Stock() {
@@ -23,6 +25,7 @@ export default function Stock() {
   const [searchTerm, setSearchTerm] = useState('')
   const [generatingBarcode, setGeneratingBarcode] = useState(null)
   const [confirmingItem, setConfirmingItem] = useState(null)
+  const [printingItem, setPrintingItem] = useState(null)
 
   useEffect(() => {
     fetchPendingStock()
@@ -269,23 +272,32 @@ export default function Stock() {
                               )}
                             </button>
                           ) : (
-                            <button
-                              onClick={() => handleConfirmItem(item.id)}
-                              disabled={confirmingItem === item.id}
-                              className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {confirmingItem === item.id ? (
-                                <>
-                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                                  Confirmando...
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircle2 className="w-3 h-3 mr-1" />
-                                  Confirmar
-                                </>
-                              )}
-                            </button>
+                            <>
+                              <button
+                                onClick={() => setPrintingItem(item)}
+                                className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                              >
+                                <Printer className="w-3 h-3 mr-1" />
+                                Imprimir
+                              </button>
+                              <button
+                                onClick={() => handleConfirmItem(item.id)}
+                                disabled={confirmingItem === item.id}
+                                className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {confirmingItem === item.id ? (
+                                  <>
+                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                                    Confirmando...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                                    Confirmar
+                                  </>
+                                )}
+                              </button>
+                            </>
                           )}
                           <button
                             onClick={() => handleDeletePending(item.id)}
@@ -398,12 +410,21 @@ export default function Stock() {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <button
-                            onClick={() => handleDeleteStock(item.id)}
-                            className="inline-flex items-center px-2 py-1.5 text-xs font-medium text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center justify-end space-x-2">
+                            <button
+                              onClick={() => setPrintingItem(item)}
+                              className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                            >
+                              <Printer className="w-3 h-3 mr-1" />
+                              Imprimir
+                            </button>
+                            <button
+                              onClick={() => handleDeleteStock(item.id)}
+                              className="inline-flex items-center px-2 py-1.5 text-xs font-medium text-red-600 hover:text-red-700"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -416,6 +437,14 @@ export default function Stock() {
       )}
 
       <ConfirmDialog />
+      
+      {/* Modal de impresión de etiqueta */}
+      {printingItem && (
+        <BarcodeLabel
+          item={printingItem}
+          onClose={() => setPrintingItem(null)}
+        />
+      )}
     </div>
   )
 }
