@@ -1044,36 +1044,49 @@ function parseInvoiceText(text) {
             
             // Buscar precio unitario (número grande cerca del total, generalmente antes)
             // Buscar en un rango más amplio para encontrar el precio unitario
+            // IMPORTANTE: El precio unitario debe estar ANTES del precio total y ser similar o igual
             for (let j = Math.max(i - 8, tableStartIndex); j < i; j++) {
               const prevLine = lines[j].trim()
-              const prevLineLower = prevLine.toLowerCase()
+              const prevLineLower = prevLine.toLowerCase().trim()
               
               // Excluir encabezados y líneas que no son precios
-              if (prevLineLower.includes('precio unit') || 
-                  prevLineLower.includes('precio unit.') ||
-                  prevLineLower.includes('p. unit') ||
-                  prevLineLower.includes('importe') ||
-                  prevLineLower.includes('desp. imp.') ||
-                  prevLineLower.includes('descripcion') ||
-                  prevLineLower.includes('cant') ||
-                  prevLineLower.includes('articulo')) {
+              const isPriceHeader = prevLineLower === 'precio unit' ||
+                                   prevLineLower === 'precio unit.' ||
+                                   prevLineLower === 'p. unit' ||
+                                   prevLineLower === 'importe' ||
+                                   prevLineLower === 'desp. imp.' ||
+                                   prevLineLower === 'descripcion' ||
+                                   prevLineLower === 'descripción' ||
+                                   prevLineLower === 'cant' ||
+                                   prevLineLower === 'cant.' ||
+                                   prevLineLower === 'articulo' ||
+                                   prevLineLower === 'artículo'
+              
+              if (isPriceHeader) {
                 continue
               }
               
               const prevNumberMatch = prevLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
               if (prevNumberMatch) {
                 const prevPrice = parseArgentineNumber(prevNumberMatch[1])
-                // El precio unitario debe ser razonable y generalmente menor o igual al total
-                // Ajustado para productos más baratos
-                if (prevPrice >= 100 && prevPrice <= totalPrice * 2 && prevPrice < 500000) {
+                // El precio unitario debe ser razonable y similar al total (para cantidad 1, debería ser igual o muy cercano)
+                // Si cantidad > 1, el precio unitario debería ser menor que el total
+                const expectedUnitPrice = cantidad > 1 ? totalPrice / cantidad : totalPrice
+                const priceDiff = Math.abs(prevPrice - expectedUnitPrice)
+                const priceDiffPercent = (priceDiff / expectedUnitPrice) * 100
+                
+                // Aceptar si el precio está dentro del rango razonable y es similar al esperado
+                if (prevPrice >= 100 && 
+                    prevPrice < 500000 &&
+                    (cantidad === 1 ? priceDiffPercent < 10 : prevPrice <= totalPrice * 1.1)) {
                   precioUnitario = prevPrice
-                  logger.info(`Precio unitario encontrado en línea ${j}: ${prevNumberMatch[1]} -> ${precioUnitario}`)
+                  logger.info(`✅ Precio unitario encontrado en línea ${j}: ${prevNumberMatch[1]} -> ${precioUnitario} (esperado: ~${expectedUnitPrice.toFixed(2)})`)
                   break
                 }
               }
             }
             
-            // Si no encontramos precio unitario, calcularlo
+            // Si no encontramos precio unitario, calcularlo del total
             if (!precioUnitario) {
               precioUnitario = totalPrice / cantidad
               logger.info(`Precio unitario calculado: ${totalPrice} / ${cantidad} = ${precioUnitario}`)
@@ -1083,9 +1096,9 @@ function parseInvoiceText(text) {
             // Buscar desde más cerca hacia atrás
             for (let j = i - 1; j >= Math.max(i - 10, tableStartIndex); j--) {
               const prevLine = lines[j].trim()
-              const prevLineLower = prevLine.toLowerCase()
+              const prevLineLower = prevLine.toLowerCase().trim()
               
-              // Excluir encabezados de columna comunes
+              // Excluir encabezados de columna comunes (comparación exacta primero)
               const isHeader = prevLineLower === 'descripcion' || 
                               prevLineLower === 'descripción' ||
                               prevLineLower === 'desp. imp.' ||
@@ -1135,32 +1148,56 @@ function parseInvoiceText(text) {
             }
             
             // Buscar código/artículo - ESTRATEGIA MEJORADA
-            // Primero intentar extraer código de la descripción si contiene números al inicio
+            // PRIORIDAD 1: Extraer código de la descripción si contiene números al inicio
             if (descripcion) {
-              // Patrón: código numérico o alfanumérico al inicio de la descripción
+              // Patrón mejorado: código numérico o alfanumérico al inicio de la descripción
               // Ejemplo: "62547 RAD.CALEF.VW GOL" -> código: "62547", descripción: "RAD.CALEF.VW GOL"
-              const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,20})\s+(.+)$/)
+              const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,25})\s+(.+)$/)
               if (codeAtStartMatch) {
                 const potentialCode = codeAtStartMatch[1].trim()
                 const remainingDesc = codeAtStartMatch[2].trim()
                 
-                // Verificar que el código potencial no sea parte de la descripción ni un encabezado
-                const potentialCodeLower = potentialCode.toLowerCase()
-                if (potentialCode.length >= 3 && potentialCode.length <= 25 && 
-                    potentialCodeLower !== 'descripcion' &&
-                    potentialCodeLower !== 'descripción' &&
-                    potentialCodeLower !== 'desp' &&
-                    !potentialCodeLower.includes('descripcion') &&
-                    !potentialCodeLower.includes('desp') &&
+                // Verificar que el código potencial no sea un encabezado
+                const potentialCodeLower = potentialCode.toLowerCase().trim()
+                const isHeaderCode = potentialCodeLower === 'descripcion' ||
+                                    potentialCodeLower === 'descripción' ||
+                                    potentialCodeLower === 'desp' ||
+                                    potentialCodeLower === 'desp. imp.' ||
+                                    potentialCodeLower === 'cant' ||
+                                    potentialCodeLower === 'articulo' ||
+                                    potentialCodeLower === 'marca' ||
+                                    potentialCodeLower === 'codigo'
+                
+                if (!isHeaderCode &&
+                    potentialCode.length >= 3 && 
+                    potentialCode.length <= 25 && 
                     remainingDesc.length > 5) {
                   codigo = potentialCode
                   descripcion = remainingDesc // Actualizar descripción sin el código
-                  logger.info(`Código extraído del inicio de descripción: ${codigo}, nueva descripción: ${descripcion}`)
+                  logger.info(`✅ Código extraído del inicio de descripción: ${codigo}, nueva descripción: ${descripcion}`)
                 }
               }
             }
             
-            // Si no encontramos código en la descripción, buscar en líneas anteriores
+            // PRIORIDAD 2: Extraer marca de la descripción si está presente
+            // Buscar marcas comunes de autos en la descripción (VW, FORD, CHEV, RENAULT, etc.)
+            if (descripcion && !marca) {
+              const marcaPatterns = [
+                /\b(VW|FORD|CHEV|CHEVROLET|RENAULT|FIAT|PEUGEOT|CITROEN|TOYOTA|HONDA|NISSAN|HYUNDAI|KIA|BMW|MERCEDES|AUDI|VOLVO|OPEL|SEAT|SKODA)\b/i,
+                /\b(MD|ELIFEL|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM)\b/i,
+              ]
+              
+              for (const pattern of marcaPatterns) {
+                const marcaMatch = descripcion.match(pattern)
+                if (marcaMatch) {
+                  marca = marcaMatch[1].toUpperCase()
+                  logger.info(`Marca extraída de descripción: ${marca}`)
+                  break
+                }
+              }
+            }
+            
+            // PRIORIDAD 3: Si no encontramos código en la descripción, buscar en líneas anteriores
             // IMPORTANTE: Excluir explícitamente "DESCRIPCION" y otros encabezados
             if (!codigo && descripcion) {
               const descIndex = lines.findIndex((l, idx) => idx < i && l.trim() === descripcion)
@@ -1171,33 +1208,42 @@ function parseInvoiceText(text) {
                   const codeLineLower = codeLine.toLowerCase().trim()
                   
                   // EXCLUIR EXPLÍCITAMENTE encabezados comunes (comparación exacta primero)
-                  if (codeLineLower === 'cant' || codeLineLower === 'cant.' ||
-                      codeLineLower === 'articulo' || codeLineLower === 'artículo' ||
-                      codeLineLower === 'marca' || codeLineLower === 'codigo' || codeLineLower === 'código' ||
-                      codeLineLower === 'descripcion' || codeLineLower === 'descripción' ||
-                      codeLineLower === 'desp. imp.' || codeLineLower === 'desp imp' ||
-                      codeLineLower === 'precio unit' || codeLineLower === 'precio unit.' ||
-                      codeLineLower === 'p. unit' || codeLineLower === 'importe' ||
-                      codeLineLower === 'bonif' || codeLineLower === 'dto' ||
-                      codeLineLower === 'total' ||
-                      codeLineLower.includes('precio') || codeLineLower.includes('importe') ||
-                      codeLineLower.includes('flete') || codeLineLower.includes('forma de pago')) {
+                  const isHeaderCode = codeLineLower === 'cant' ||
+                                      codeLineLower === 'cant.' ||
+                                      codeLineLower === 'articulo' ||
+                                      codeLineLower === 'artículo' ||
+                                      codeLineLower === 'marca' ||
+                                      codeLineLower === 'codigo' ||
+                                      codeLineLower === 'código' ||
+                                      codeLineLower === 'descripcion' ||
+                                      codeLineLower === 'descripción' ||
+                                      codeLineLower === 'desp. imp.' ||
+                                      codeLineLower === 'desp imp' ||
+                                      codeLineLower === 'precio unit' ||
+                                      codeLineLower === 'precio unit.' ||
+                                      codeLineLower === 'p. unit' ||
+                                      codeLineLower === 'importe' ||
+                                      codeLineLower === 'bonif' ||
+                                      codeLineLower === 'dto' ||
+                                      codeLineLower === 'total'
+                  
+                  if (isHeaderCode) {
                     logger.info(`Línea ${j} excluida como encabezado: "${codeLine}"`)
                     continue
                   }
                   
                   // Buscar código: número de 3+ dígitos o alfanumérico corto
-                  // EXCLUIR explícitamente si es solo "DESCRIPCION" o similar
+                  // EXCLUIR explícitamente si contiene palabras de encabezado
                   if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,25}$/.test(codeLine)) &&
                       codeLine.length < 30 &&
-                      codeLineLower !== 'descripcion' &&
-                      codeLineLower !== 'descripción' &&
                       !codeLineLower.includes('marca') &&
                       !codeLineLower.includes('codigo') &&
                       !codeLineLower.includes('descripcion') &&
-                      !codeLineLower.includes('desp')) {
+                      !codeLineLower.includes('desp') &&
+                      !codeLineLower.includes('precio') &&
+                      !codeLineLower.includes('importe')) {
                     codigo = codeLine
-                    logger.info(`Código encontrado en línea ${j}: ${codigo}`)
+                    logger.info(`✅ Código encontrado en línea separada ${j}: ${codigo}`)
                     break
                   }
                 }
