@@ -3,7 +3,7 @@ import { supabase } from '../config/supabase.js'
 import config from '../config/env.js'
 import { logger } from '../utils/logger.js'
 import { getBuenosAiresDateString } from '../utils/dateHelpers.js'
-import pdfParse from 'pdf-parse'
+// pdf-parse v2+ usa PDFParse como clase
 
 // Inicializar cliente de Google Cloud Vision
 let visionClient = null
@@ -241,12 +241,22 @@ export const processInvoiceImage = async (req, res) => {
       // Si no tiene texto nativo, es un PDF escaneado y necesitamos usar OCR
       try {
         logger.info('Intentando extraer texto nativo del PDF...')
-        const pdfData = await pdfParse(fileBuffer)
         
-        if (pdfData.text && pdfData.text.trim().length > 50) {
+        // Importar pdf-parse dinámicamente (v2+ usa PDFParse como clase)
+        const { PDFParse } = await import('pdf-parse')
+        
+        // Crear instancia del parser con el buffer del PDF
+        const parser = new PDFParse({ data: fileBuffer })
+        const pdfData = await parser.getText()
+        
+        // PDFParse.getText() retorna un objeto con text y metadata
+        const pdfText = pdfData.text || pdfData
+        const numPages = pdfData.numPages || pdfData.numpages || 1
+        
+        if (pdfText && typeof pdfText === 'string' && pdfText.trim().length > 50) {
           // PDF con texto nativo - extracción directa (máxima precisión)
-          extractedText = pdfData.text
-          logger.info(`✅ Texto nativo extraído del PDF: ${extractedText.length} caracteres, ${pdfData.numpages} páginas`)
+          extractedText = pdfText
+          logger.info(`✅ Texto nativo extraído del PDF: ${extractedText.length} caracteres, ${numPages} página(s)`)
         } else {
           // PDF escaneado (sin texto nativo) - usar Google Cloud Vision OCR
           logger.info('PDF sin texto nativo detectado, usando OCR de Google Cloud Vision...')
