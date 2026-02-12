@@ -8,6 +8,7 @@ import {
   List, 
   BarChart3,
   Building2,
+  Package,
   LogOut,
   Menu,
   X
@@ -24,6 +25,7 @@ export default function Layout() {
     { name: 'Cierre de Caja', href: '/cash-closure', icon: Wallet },
     { name: 'Listas de Pedidos', href: '/order-lists', icon: List },
     { name: 'Proveedores', href: '/suppliers', icon: Building2 },
+    { name: 'Stock', href: '/stock', icon: Package },
     { name: 'Estadísticas', href: '/statistics', icon: BarChart3 },
   ]
 

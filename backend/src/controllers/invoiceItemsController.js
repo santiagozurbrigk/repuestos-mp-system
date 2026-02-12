@@ -257,6 +257,80 @@ export const createBulkInvoiceItems = async (req, res) => {
     }
 
     logger.info(`Items creados exitosamente: ${data?.length || 0}`)
+
+    // Crear registros en stock_pending para cada item
+    if (data && data.length > 0) {
+      try {
+        const stockPendingItems = data.map((item) => {
+          // Extraer código y marca de la descripción si existe
+          let code = null
+          let brand = null
+          
+          // Extraer código de la descripción
+          if (item.description) {
+            // Si la descripción tiene formato "Código: XXX", extraerlo
+            const codeMatch = item.description.match(/Código:\s*(.+)/i)
+            if (codeMatch) {
+              code = codeMatch[1].trim()
+            }
+          }
+          
+          // Si no hay código en la descripción, intentar extraerlo del nombre del producto
+          // Buscar números de 3+ dígitos o alfanuméricos al inicio o después de marca
+          if (!code && item.item_name) {
+            // Patrón: buscar número de 3+ dígitos o alfanumérico
+            const codeInName = item.item_name.match(/\b([A-Z0-9]{3,20})\b/)
+            if (codeInName && !codeInName[1].match(/^\d{1,2}$/)) {
+              // Verificar que no sea solo números pequeños (cantidad) ni fechas
+              const potentialCode = codeInName[1]
+              if (!potentialCode.match(/^\d{1,2}$/) && !potentialCode.match(/^\d{2}[-\/]\d{2}[-\/]\d{4}/)) {
+                code = potentialCode
+              }
+            }
+          }
+          
+          // Intentar extraer marca del nombre del producto
+          // Buscar texto corto en mayúsculas al inicio (2-15 caracteres)
+          if (item.item_name) {
+            const nameParts = item.item_name.trim().split(/\s+/)
+            if (nameParts.length > 1) {
+              const firstPart = nameParts[0]
+              // Verificar que sea marca (texto en mayúsculas, 2-15 caracteres, no números)
+              if (/^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(firstPart) && 
+                  !firstPart.match(/^\d+$/) &&
+                  firstPart.length <= 15) {
+                brand = firstPart
+              }
+            }
+          }
+
+          return {
+            invoice_id: invoice_id,
+            invoice_item_id: item.id,
+            user_id: userId,
+            item_name: item.item_name,
+            code: code,
+            brand: brand,
+            quantity: item.quantity,
+          }
+        })
+
+        const { error: stockError } = await supabase
+          .from('stock_pending')
+          .insert(stockPendingItems)
+
+        if (stockError) {
+          logger.warn('Error al crear items en stock_pending (no crítico):', stockError)
+          // No fallar la operación si hay error en stock_pending
+        } else {
+          logger.info(`Items creados en stock_pending: ${stockPendingItems.length}`)
+        }
+      } catch (stockErr) {
+        logger.warn('Error inesperado al crear items en stock_pending (no crítico):', stockErr)
+        // No fallar la operación si hay error en stock_pending
+      }
+    }
+
     res.status(201).json(data)
   } catch (error) {
     logger.error('Error inesperado en createBulkInvoiceItems:', {
