@@ -1862,68 +1862,6 @@ function parseInvoiceText(text) {
         }
       }
       
-      // NUEVO PATRÓN PRIORITARIO: CANTIDAD CÓDIGO DESCRIPCIÓN PRECIO_UNITARIO PRECIO_TOTAL
-      // Formato común: "1 62547 RAD. CALEF. VW GOL 08-> TREND $93.356,09 $93.356,09"
-      const patternCantCodigoDesc = /^(\d{1,2})\s+(\d{3,}|[A-Z0-9]{3,25})\s+([A-ZÁÉÍÓÚÑ\s\.\-\>]{5,100})\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
-      const matchCantCodigoDesc = line.match(patternCantCodigoDesc)
-      
-      if (matchCantCodigoDesc) {
-        const [, cantidad, codigo, descripcion, precioUnitStr, totalStr] = matchCantCodigoDesc
-        
-        const parseArgentineNumber = (numStr) => {
-          if (!numStr) return 0
-          const cleaned = numStr.trim().replace(/\$/g, '').replace(/\./g, '').replace(',', '.')
-          return parseFloat(cleaned) || 0
-        }
-        
-        const qty = parseInt(cantidad) || 1
-        const unitPrice = parseArgentineNumber(precioUnitStr)
-        const totalPrice = parseArgentineNumber(totalStr)
-        
-        logger.info(`✅ Patrón CANT-CODIGO-DESC (tabla) encontrado en línea ${i}: Cant: ${qty}, Código: ${codigo}, Desc: ${descripcion.trim()}, PrecioUnit: ${precioUnitStr} -> ${unitPrice}, Total: ${totalStr} -> ${totalPrice}`)
-        
-        // Validar precios
-        const isValidPrice = (unitPrice >= 100 && unitPrice < 10000000) && 
-                            (totalPrice >= 100 && totalPrice < 10000000)
-        
-        // Extraer marca de la descripción si está presente
-        let marca = null
-        const marcaPatterns = [
-          /\b(VW|FORD|CHEV|CHEVROLET|RENAULT|FIAT|PEUGEOT|CITROEN|TOYOTA|HONDA|NISSAN|HYUNDAI|KIA|BMW|MERCEDES|AUDI|VOLVO|OPEL|SEAT|SKODA)\b/i,
-          /\b(MD|ELIFEL|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM)\b/i,
-        ]
-        
-        for (const pattern of marcaPatterns) {
-          const marcaMatch = descripcion.match(pattern)
-          if (marcaMatch) {
-            marca = marcaMatch[1].toUpperCase()
-            break
-          }
-        }
-        
-        // Limpiar descripción: remover código si está al inicio
-        let cleanDescription = descripcion.trim()
-        if (codigo && cleanDescription.startsWith(codigo)) {
-          cleanDescription = cleanDescription.substring(codigo.length).trim()
-        }
-        cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
-        
-        if (isValidPrice && cleanDescription.length > 3 && qty > 0 && qty <= 1000) {
-          result.items.push({
-            item_name: cleanDescription,
-            quantity: qty,
-            unit_price: unitPrice,
-            total_price: totalPrice,
-            description: codigo ? `Código: ${codigo}` : null,
-            brand: marca || null,
-          })
-          logger.info(`✅ Producto encontrado (CANT-CODIGO-DESC tabla): "${cleanDescription}" - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}, Código: ${codigo}, Marca: ${marca || 'N/A'}`)
-          continue
-        } else {
-          logger.warn(`❌ Producto rechazado (CANT-CODIGO-DESC tabla) - Desc: "${cleanDescription}", Precio: ${unitPrice}, Total: ${totalPrice}, isValidPrice: ${isValidPrice}`)
-        }
-      }
-      
       // Buscar patrones de productos en formato de tabla (una sola línea)
       // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL
       // Mejorado para manejar códigos alfanuméricos como "ROM 210" o "500-BU-00001"
