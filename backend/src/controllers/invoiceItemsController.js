@@ -223,6 +223,7 @@ export const createBulkInvoiceItems = async (req, res) => {
         unit_price: finalUnitPrice,
         total_price: finalTotalPrice,
         description: item.description || null,
+        brand: item.brand || null, // Marca del producto
       }
 
       logger.info(`Item ${index} preparado:`, {
@@ -289,9 +290,12 @@ export const createBulkInvoiceItems = async (req, res) => {
             }
           }
           
-          // Intentar extraer marca del nombre del producto
-          // Buscar texto corto en mayúsculas al inicio (2-15 caracteres)
-          if (item.item_name) {
+          // Usar la marca directamente del campo brand si existe
+          if (item.brand) {
+            brand = item.brand.trim()
+          } else if (item.item_name) {
+            // Si no hay marca en el campo brand, intentar extraerla del nombre del producto
+            // Buscar texto corto en mayúsculas al inicio (2-15 caracteres)
             const nameParts = item.item_name.trim().split(/\s+/)
             if (nameParts.length > 1) {
               const firstPart = nameParts[0]

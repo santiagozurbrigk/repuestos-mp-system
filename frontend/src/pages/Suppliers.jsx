@@ -410,6 +410,7 @@ export default function Suppliers() {
                 unit_price: unitPrice !== undefined && !isNaN(unitPrice) ? unitPrice : undefined,
                 total_price: totalPrice !== undefined && !isNaN(totalPrice) ? totalPrice : undefined,
                 description: item.description || null,
+                brand: item.brand || null, // Marca del producto
               }
             })
 

@@ -1015,13 +1015,16 @@ function parseInvoiceText(text) {
         if (largeNumberMatch) {
           const priceValue = parseArgentineNumber(largeNumberMatch[1])
           
-          // Filtrar precios razonables de productos (entre 1000 y 400000)
-          if (priceValue >= 1000 && priceValue < 400000) {
-            logger.info(`Línea ${i} contiene precio posible: ${largeNumberMatch[1]} -> ${priceValue}`)
+          // Filtrar precios razonables de productos (entre 100 y 200000)
+          // Ajustado para capturar productos más baratos y evitar totales de factura
+          // Los productos individuales generalmente están entre 100 y 200000
+          if (priceValue >= 100 && priceValue < 200000) {
+            logger.info(`Línea ${i} contiene precio posible de producto: ${largeNumberMatch[1]} -> ${priceValue}`)
             
             // Buscar hacia atrás (hasta 8 líneas) para encontrar todos los componentes del producto
             let cantidad = 1
             let codigo = null
+            let marca = null
             let descripcion = null
             let precioUnitario = null
             let totalPrice = priceValue
@@ -1040,13 +1043,29 @@ function parseInvoiceText(text) {
             }
             
             // Buscar precio unitario (número grande cerca del total, generalmente antes)
-            for (let j = Math.max(i - 5, tableStartIndex); j < i; j++) {
+            // Buscar en un rango más amplio para encontrar el precio unitario
+            for (let j = Math.max(i - 8, tableStartIndex); j < i; j++) {
               const prevLine = lines[j].trim()
+              const prevLineLower = prevLine.toLowerCase()
+              
+              // Excluir encabezados y líneas que no son precios
+              if (prevLineLower.includes('precio unit') || 
+                  prevLineLower.includes('precio unit.') ||
+                  prevLineLower.includes('p. unit') ||
+                  prevLineLower.includes('importe') ||
+                  prevLineLower.includes('desp. imp.') ||
+                  prevLineLower.includes('descripcion') ||
+                  prevLineLower.includes('cant') ||
+                  prevLineLower.includes('articulo')) {
+                continue
+              }
+              
               const prevNumberMatch = prevLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
               if (prevNumberMatch) {
                 const prevPrice = parseArgentineNumber(prevNumberMatch[1])
                 // El precio unitario debe ser razonable y generalmente menor o igual al total
-                if (prevPrice >= 1000 && prevPrice <= totalPrice * 2 && prevPrice < 200000) {
+                // Ajustado para productos más baratos
+                if (prevPrice >= 100 && prevPrice <= totalPrice * 2 && prevPrice < 500000) {
                   precioUnitario = prevPrice
                   logger.info(`Precio unitario encontrado en línea ${j}: ${prevNumberMatch[1]} -> ${precioUnitario}`)
                   break
@@ -1066,6 +1085,31 @@ function parseInvoiceText(text) {
               const prevLine = lines[j].trim()
               const prevLineLower = prevLine.toLowerCase()
               
+              // Excluir encabezados de columna comunes
+              const isHeader = prevLineLower === 'descripcion' || 
+                              prevLineLower === 'descripción' ||
+                              prevLineLower === 'desp. imp.' ||
+                              prevLineLower === 'desp imp' ||
+                              prevLineLower === 'precio unit.' ||
+                              prevLineLower === 'precio unit' ||
+                              prevLineLower === 'p. unit' ||
+                              prevLineLower === 'importe' ||
+                              prevLineLower === 'cant' ||
+                              prevLineLower === 'cant.' ||
+                              prevLineLower === 'articulo' ||
+                              prevLineLower === 'artículo' ||
+                              prevLineLower === 'marca' ||
+                              prevLineLower === 'codigo' ||
+                              prevLineLower === 'código' ||
+                              prevLineLower === 'dto' ||
+                              prevLineLower === 'bonif' ||
+                              prevLineLower === 'total'
+              
+              if (isHeader) {
+                logger.info(`Línea ${j} es encabezado de columna, ignorando: ${prevLine}`)
+                continue
+              }
+              
               // Verificar que sea una descripción válida
               if (prevLine.length > 5 && 
                   prevLine.length < 120 &&
@@ -1074,22 +1118,11 @@ function parseInvoiceText(text) {
                   !prevLine.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
                   !prevLine.match(/^\d+%$/) &&
                   !prevLine.match(/^\$+$/) &&
-                  !prevLineLower.includes('marca') &&
-                  !prevLineLower.includes('codigo') &&
-                  !prevLineLower.includes('código') &&
-                  !prevLineLower.includes('articulo') &&
-                  !prevLineLower.includes('artículo') &&
-                  !prevLineLower.includes('cant') &&
-                  !prevLineLower.includes('cant.') &&
-                  !prevLineLower.includes('descripcion') &&
-                  !prevLineLower.includes('descripción') &&
                   !prevLineLower.includes('precio') &&
                   !prevLineLower.includes('importe') &&
                   !prevLineLower.includes('total') &&
                   !prevLineLower.includes('subtotal') &&
                   !prevLineLower.includes('iva') &&
-                  !prevLineLower.includes('dto') &&
-                  !prevLineLower.includes('bonif') &&
                   !prevLineLower.includes('flete') &&
                   !prevLineLower.includes('cliente') &&
                   !prevLineLower.includes('vendedor')) {
@@ -1101,19 +1134,49 @@ function parseInvoiceText(text) {
               }
             }
             
-            // Buscar código/artículo (número o alfanumérico antes de la descripción)
+            // Buscar código/artículo - ESTRATEGIA MEJORADA
+            // Primero intentar extraer código de la descripción si contiene números al inicio
             if (descripcion) {
+              // Patrón: código numérico o alfanumérico al inicio de la descripción
+              // Ejemplo: "62547 RAD.CALEF.VW GOL" -> código: "62547", descripción: "RAD.CALEF.VW GOL"
+              const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,15})\s+(.+)$/)
+              if (codeAtStartMatch) {
+                const potentialCode = codeAtStartMatch[1].trim()
+                const remainingDesc = codeAtStartMatch[2].trim()
+                
+                // Verificar que el código potencial no sea parte de la descripción
+                if (potentialCode.length >= 3 && potentialCode.length <= 20 && 
+                    !potentialCode.toLowerCase().includes('descripcion') &&
+                    !potentialCode.toLowerCase().includes('desp') &&
+                    remainingDesc.length > 5) {
+                  codigo = potentialCode
+                  descripcion = remainingDesc // Actualizar descripción sin el código
+                  logger.info(`Código extraído del inicio de descripción: ${codigo}, nueva descripción: ${descripcion}`)
+                }
+              }
+            }
+            
+            // Si no encontramos código en la descripción, buscar en líneas anteriores
+            if (!codigo && descripcion) {
               const descIndex = lines.findIndex((l, idx) => idx < i && l.trim() === descripcion)
               if (descIndex > 0) {
-                for (let j = Math.max(descIndex - 3, tableStartIndex); j < descIndex; j++) {
+                // Buscar código en líneas anteriores a la descripción
+                for (let j = Math.max(descIndex - 5, tableStartIndex); j < descIndex; j++) {
                   const codeLine = lines[j].trim()
                   const codeLineLower = codeLine.toLowerCase()
                   
-                  // Excluir palabras que no son códigos
+                  // Excluir encabezados de columna y palabras que NO son códigos
                   if (codeLineLower === 'cant' || codeLineLower === 'cant.' ||
                       codeLineLower === 'articulo' || codeLineLower === 'artículo' ||
                       codeLineLower === 'marca' || codeLineLower === 'codigo' ||
-                      codeLineLower.includes('precio') || codeLineLower.includes('importe')) {
+                      codeLineLower === 'descripcion' || codeLineLower === 'descripción' ||
+                      codeLineLower === 'desp. imp.' || codeLineLower === 'desp imp' ||
+                      codeLineLower === 'precio unit' || codeLineLower === 'precio unit.' ||
+                      codeLineLower === 'p. unit' || codeLineLower === 'importe' ||
+                      codeLineLower === 'bonif' || codeLineLower === 'dto' ||
+                      codeLineLower === 'total' ||
+                      codeLineLower.includes('precio') || codeLineLower.includes('importe') ||
+                      codeLineLower.includes('flete') || codeLineLower.includes('forma de pago')) {
                     continue
                   }
                   
@@ -1121,42 +1184,9 @@ function parseInvoiceText(text) {
                   if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,20}$/.test(codeLine)) &&
                       codeLine.length < 25 &&
                       !codeLineLower.includes('marca') &&
-                      !codeLineLower.includes('codigo')) {
-                    codigo = codeLine
-                    logger.info(`Código encontrado en línea ${j}: ${codigo}`)
-                    break
-                  }
-                }
-              }
-            }
-            
-            // Buscar código (número o alfanumérico antes de la descripción)
-            if (descripcion) {
-              const descIndex = lines.findIndex((l, idx) => idx < i && l.trim() === descripcion)
-              if (descIndex > 0) {
-                for (let j = Math.max(descIndex - 5, tableStartIndex); j < descIndex; j++) {
-                  const codeLine = lines[j].trim()
-                  const codeLineLower = codeLine.toLowerCase()
-                  
-                  // Excluir palabras que NO son códigos
-                  if (codeLineLower === 'bonif' ||
-                      codeLineLower === 'dto' ||
-                      codeLineLower === 'total' ||
-                      codeLineLower === 'cant' ||
-                      codeLineLower === 'p. unit' ||
-                      codeLineLower === 'marca' ||
-                      codeLineLower === 'codigo' ||
-                      codeLineLower === 'articulo' ||
-                      codeLineLower.includes('flete') ||
-                      codeLineLower.includes('forma de pago')) {
-                    continue
-                  }
-                  
-                  // Buscar código: número de 3+ dígitos o alfanumérico corto
-                  if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,15}$/.test(codeLine)) &&
-                      codeLine.length < 20 &&
-                      !codeLineLower.includes('marca') &&
-                      !codeLineLower.includes('codigo')) {
+                      !codeLineLower.includes('codigo') &&
+                      !codeLineLower.includes('descripcion') &&
+                      !codeLineLower.includes('desp')) {
                     codigo = codeLine
                     logger.info(`Código encontrado en línea ${j}: ${codigo}`)
                     break
@@ -1197,13 +1227,21 @@ function parseInvoiceText(text) {
             }
             
             // Si encontramos datos suficientes, crear el producto
-            // Aceptar si tenemos descripción y precio total válido
-            if (descripcion && totalPrice >= 1000) {
-              // Construir nombre del producto (con código si existe, o solo descripción)
-              let productName = descripcion
-              if (codigo && !descripcion.includes(codigo)) {
-                productName = `${codigo} ${descripcion}`.trim()
+            // Aceptar si tenemos descripción y precio total válido (ajustado para productos más baratos)
+            if (descripcion && totalPrice >= 100) {
+              // Limpiar la descripción: remover código si está incluido al inicio
+              let cleanDescription = descripcion.trim()
+              
+              // Si la descripción empieza con el código, removerlo
+              if (codigo && cleanDescription.startsWith(codigo)) {
+                cleanDescription = cleanDescription.substring(codigo.length).trim()
               }
+              
+              // Remover palabras como "DESCRIPCION" si aparecen al inicio
+              cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
+              
+              // El nombre del producto es SOLO la descripción limpia (sin código ni marca)
+              const productName = cleanDescription
               
               // Verificar que no sea un elemento excluido
               const productNameLower = productName.toLowerCase()
@@ -1252,14 +1290,15 @@ function parseInvoiceText(text) {
                 const finalUnitPrice = precioUnitario || (totalPrice / (cantidad || 1))
                 
                 result.items.push({
-                  item_name: productName,
+                  item_name: productName, // Solo descripción limpia
                   quantity: cantidad || 1,
                   unit_price: finalUnitPrice,
                   total_price: totalPrice,
-                  description: codigo ? `Código: ${codigo}` : null,
+                  description: codigo ? `Código: ${codigo}` : null, // Código separado en description
+                  brand: marca || null, // Marca del producto
                 })
                 processedProducts.add(productKey)
-                logger.info(`✅ Producto encontrado: "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}`)
+                logger.info(`✅ Producto encontrado: "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}, Marca: ${marca || 'N/A'}`)
                 
                 // Avanzar líneas para evitar procesar el mismo producto múltiples veces
                 i += 3
@@ -1384,15 +1423,23 @@ function parseInvoiceText(text) {
                                       !descripcionLimpia.toLowerCase().includes('cliente')
             
             if (isValidUnitPrice && isValidTotalPrice && isValidDescription && qty > 0 && qty <= 1000) {
-              // Construir nombre del producto: Marca + Descripción
-              const productName = `${marca.trim()} ${descripcionLimpia}`.trim()
+              // Limpiar descripción: remover código si está al inicio
+              let cleanDescription = descripcionLimpia.trim()
+              if (codigoLimpio && cleanDescription.startsWith(codigoLimpio)) {
+                cleanDescription = cleanDescription.substring(codigoLimpio.length).trim()
+              }
+              cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
+              
+              // El nombre es SOLO la descripción (sin marca ni código)
+              const productName = cleanDescription
               
               result.items.push({
                 item_name: productName,
                 quantity: qty,
                 unit_price: unitPrice,
                 total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
-                description: `Código: ${codigoLimpio}`,
+                description: codigoLimpio ? `Código: ${codigoLimpio}` : null,
+                brand: marca ? marca.trim() : null, // Marca del producto
               })
               logger.info(`✅ Producto encontrado (patrón 1): "${productName}" - Cant: ${qty}, Precio Unit: ${unitPrice}, Total: ${totalPrice}, Código: ${codigoLimpio}`)
               continue
@@ -1439,6 +1486,7 @@ function parseInvoiceText(text) {
                 unit_price: unitPrice,
                 total_price: totalPrice || (qty * unitPrice),
                 description: null,
+                brand: null, // Sin marca en este patrón
               })
               logger.info(`✅ Producto encontrado (patrón 2): ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
               continue
@@ -1488,6 +1536,7 @@ function parseInvoiceText(text) {
                   unit_price: unitPrice,
                   total_price: totalPrice,
                   description: null,
+                  brand: null, // Sin marca en este patrón
                 })
                 logger.info(`✅ Producto encontrado (patrón 2b): ${descripcion} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
                 continue
@@ -1514,6 +1563,7 @@ function parseInvoiceText(text) {
                 unit_price: unitPrice,
                 total_price: unitPrice,
                 description: null,
+                brand: null, // Sin marca en este patrón
               })
             }
           }
@@ -1567,7 +1617,8 @@ function parseInvoiceText(text) {
       
       // Buscar patrones de productos en formato de tabla (una sola línea)
       // Patrón 1: MARCA CODIGO DESCRIPCION CANT P.UNIT DTO TOTAL
-      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ\s]{1,30})\s+(\d{3,})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
+      // Mejorado para manejar códigos alfanuméricos como "ROM 210" o "500-BU-00001"
+      const tablePattern1 = /^([A-ZÁÉÍÓÚÑ]{2,15})\s+([A-Z0-9\s\-]{3,25})\s+([A-ZÁÉÍÓÚÑ\s\.\-]{5,80})\s+(\d{1,2})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s*(?:\d+%|\d+\.\d+%)?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
       const match1 = line.match(tablePattern1)
       
       if (match1) {
@@ -1598,12 +1649,21 @@ function parseInvoiceText(text) {
             !descripcion.trim().match(/^\d+$/) &&
             !descripcion.trim().toLowerCase().includes('chiaia') &&
             !descripcion.trim().toLowerCase().includes('fabian')) {
+          // Limpiar descripción: remover código si está al inicio
+          let cleanDescription = descripcion.trim()
+          if (codigo && cleanDescription.startsWith(codigo)) {
+            cleanDescription = cleanDescription.substring(codigo.length).trim()
+          }
+          cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
+          
+          // El nombre es SOLO la descripción (sin marca ni código)
           result.items.push({
-            item_name: `${marca.trim()} ${descripcion.trim()}`.trim(),
+            item_name: cleanDescription,
             quantity: qty,
             unit_price: unitPrice,
             total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
-            description: `Código: ${codigo}`,
+            description: codigo ? `Código: ${codigo}` : null,
+            brand: marca ? marca.trim() : null, // Marca del producto
           })
           logger.info(`✅ Producto encontrado (patrón 1 tabla): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
           continue
@@ -1648,6 +1708,7 @@ function parseInvoiceText(text) {
               unit_price: unitPrice,
               total_price: totalPrice || (qty * unitPrice),
               description: null,
+              brand: null, // Sin marca en este patrón
             })
             logger.info(`✅ Producto encontrado (patrón 2 tabla): ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
             continue
@@ -1675,6 +1736,7 @@ function parseInvoiceText(text) {
               unit_price: unitPrice,
               total_price: unitPrice,
               description: null,
+              brand: null, // Sin marca en este patrón
             })
           }
         }
@@ -1715,11 +1777,14 @@ function parseInvoiceText(text) {
         if (largeNumberMatch) {
           const priceValue = parseArgentineNumber(largeNumberMatch[1])
           
-          if (priceValue >= 1000 && priceValue < 400000) {
+          // Filtrar precios razonables de productos (entre 100 y 200000)
+          // Evitar totales de factura que son generalmente más grandes
+          if (priceValue >= 100 && priceValue < 200000) {
             logger.info(`Línea ${i} contiene precio posible: ${largeNumberMatch[1]} -> ${priceValue}`)
             
             let cantidad = 1
             let codigo = null
+            let marca = null
             let descripcion = null
             let precioUnitario = null
             let totalPrice = priceValue
@@ -1816,12 +1881,39 @@ function parseInvoiceText(text) {
               }
             }
             
+            // Buscar marca (texto corto en mayúsculas antes del código)
+            if (codigo) {
+              const codeIndex = lines.findIndex((l, idx) => idx < i && l.trim() === codigo)
+              if (codeIndex > 0) {
+                for (let j = Math.max(codeIndex - 3, productTableStart); j < codeIndex; j++) {
+                  const marcaLine = lines[j].trim()
+                  // Buscar marca: texto corto en mayúsculas
+                  if (/^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(marcaLine) &&
+                      !marcaLine.toLowerCase().includes('marca') &&
+                      !marcaLine.toLowerCase().includes('codigo')) {
+                    marca = marcaLine
+                    logger.info(`Marca encontrada en línea ${j}: ${marca}`)
+                    break
+                  }
+                }
+              }
+            }
+            
             // Crear producto si tenemos descripción
             if (descripcion && totalPrice >= 1000) {
-              let productName = descripcion
-              if (codigo && !descripcion.includes(codigo)) {
-                productName = `${codigo} ${descripcion}`.trim()
+              // Limpiar la descripción: remover código si está incluido al inicio
+              let cleanDescription = descripcion.trim()
+              
+              // Si la descripción empieza con el código, removerlo
+              if (codigo && cleanDescription.startsWith(codigo)) {
+                cleanDescription = cleanDescription.substring(codigo.length).trim()
               }
+              
+              // Remover palabras como "DESCRIPCION" si aparecen al inicio
+              cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
+              
+              // El nombre del producto es SOLO la descripción limpia (sin código ni marca)
+              const productName = cleanDescription
               
               const productNameLower = productName.toLowerCase()
               if (productNameLower.includes('flete') ||
@@ -1850,9 +1942,10 @@ function parseInvoiceText(text) {
                   unit_price: finalUnitPrice,
                   total_price: totalPrice,
                   description: codigo ? `Código: ${codigo}` : null,
+                  brand: marca || null, // Marca del producto
                 })
                 processedProducts.add(productKey)
-                logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}`)
+                logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}, Marca: ${marca || 'N/A'}`)
                 
                 i += 3
                 continue
