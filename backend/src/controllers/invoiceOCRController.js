@@ -1250,18 +1250,46 @@ function parseInvoiceText(text) {
               }
             }
             
-            // Buscar marca (texto corto en mayúsculas antes del código)
-            if (codigo) {
+            // Buscar marca - PRIORIDAD 1: Extraer de la descripción si está presente
+            if (descripcion && !marca) {
+              // Buscar marcas comunes de autos en la descripción (VW, FORD, CHEV, RENAULT, etc.)
+              const marcaPatterns = [
+                /\b(VW|FORD|CHEV|CHEVROLET|RENAULT|FIAT|PEUGEOT|CITROEN|TOYOTA|HONDA|NISSAN|HYUNDAI|KIA|BMW|MERCEDES|AUDI|VOLVO|OPEL|SEAT|SKODA)\b/i,
+                /\b(MD|ELIFEL|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM)\b/i,
+              ]
+              
+              for (const pattern of marcaPatterns) {
+                const marcaMatch = descripcion.match(pattern)
+                if (marcaMatch) {
+                  marca = marcaMatch[1].toUpperCase()
+                  logger.info(`✅ Marca extraída de descripción: ${marca}`)
+                  break
+                }
+              }
+            }
+            
+            // PRIORIDAD 2: Buscar marca en línea separada antes del código
+            if (!marca && codigo) {
               const codeIndex = lines.findIndex((l, idx) => idx < i && l.trim() === codigo)
               if (codeIndex > 0) {
                 for (let j = Math.max(codeIndex - 3, tableStartIndex); j < codeIndex; j++) {
                   const marcaLine = lines[j].trim()
+                  const marcaLineLower = marcaLine.toLowerCase().trim()
+                  
+                  // Excluir encabezados
+                  if (marcaLineLower === 'marca' ||
+                      marcaLineLower === 'codigo' ||
+                      marcaLineLower === 'cant' ||
+                      marcaLineLower === 'articulo' ||
+                      marcaLineLower === 'descripcion') {
+                    continue
+                  }
+                  
                   // Buscar marca: texto corto en mayúsculas
                   if (/^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(marcaLine) &&
-                      !marcaLine.toLowerCase().includes('marca') &&
-                      !marcaLine.toLowerCase().includes('codigo')) {
+                      marcaLine.length < 20) {
                     marca = marcaLine
-                    logger.info(`Marca encontrada en línea ${j}: ${marca}`)
+                    logger.info(`✅ Marca encontrada en línea separada ${j}: ${marca}`)
                     break
                   }
                 }
@@ -1294,6 +1322,11 @@ function parseInvoiceText(text) {
               
               // Remover palabras como "DESCRIPCION" si aparecen al inicio
               cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
+              
+              // Remover marca si está al inicio de la descripción (ya la tenemos separada)
+              if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
+                cleanDescription = cleanDescription.substring(marca.length).trim()
+              }
               
               // El nombre del producto es SOLO la descripción limpia (sin código ni marca)
               const productName = cleanDescription
