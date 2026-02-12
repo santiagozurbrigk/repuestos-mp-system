@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase.js'
 import config from '../config/env.js'
 import { logger } from '../utils/logger.js'
 import { getBuenosAiresDateString } from '../utils/dateHelpers.js'
+import pdfParse from 'pdf-parse'
 
 // Inicializar cliente de Google Cloud Vision
 let visionClient = null
@@ -236,36 +237,70 @@ export const processInvoiceImage = async (req, res) => {
     let extractedText = null
 
     if (isPDF) {
-      // Para PDFs, usar el método específico de Google Cloud Vision
-      // Google Cloud Vision puede procesar PDFs directamente
+      // Para PDFs, primero intentar extraer texto nativo (si el PDF tiene texto seleccionable)
+      // Si no tiene texto nativo, es un PDF escaneado y necesitamos usar OCR
       try {
-        // Para PDFs, necesitamos usar batchAnnotateFiles o convertir a imagen
-        // La forma más simple es usar documentTextDetection con el PDF como contenido
-        const [result] = await visionClient.documentTextDetection({
-          image: { content: fileBuffer },
-        })
-
-        const fullTextAnnotation = result.fullTextAnnotation
-
-        if (!fullTextAnnotation || !fullTextAnnotation.text) {
-          logger.warn('No se encontró texto en el PDF', {
-            hasAnnotation: !!fullTextAnnotation,
-            hasText: !!fullTextAnnotation?.text,
-            fileSize: fileBuffer.length,
+        logger.info('Intentando extraer texto nativo del PDF...')
+        const pdfData = await pdfParse(fileBuffer)
+        
+        if (pdfData.text && pdfData.text.trim().length > 50) {
+          // PDF con texto nativo - extracción directa (máxima precisión)
+          extractedText = pdfData.text
+          logger.info(`✅ Texto nativo extraído del PDF: ${extractedText.length} caracteres, ${pdfData.numpages} páginas`)
+        } else {
+          // PDF escaneado (sin texto nativo) - usar Google Cloud Vision OCR
+          logger.info('PDF sin texto nativo detectado, usando OCR de Google Cloud Vision...')
+          
+          // Google Cloud Vision requiere que los PDFs estén en Cloud Storage o convertirlos a imágenes
+          // Para PDFs escaneados, necesitamos convertir cada página a imagen
+          // Por ahora, intentamos con la primera página usando documentTextDetection
+          // NOTA: Esto solo procesará la primera página del PDF
+          
+          const [result] = await visionClient.documentTextDetection({
+            image: { content: fileBuffer },
           })
-          return res.status(400).json({
-            error: 'No se pudo extraer texto del PDF. Asegúrate de que el PDF contenga texto seleccionable o sea una imagen escaneada clara.',
-          })
+
+          const fullTextAnnotation = result.fullTextAnnotation
+
+          if (!fullTextAnnotation || !fullTextAnnotation.text) {
+            logger.warn('No se encontró texto en el PDF escaneado', {
+              hasAnnotation: !!fullTextAnnotation,
+              hasText: !!fullTextAnnotation?.text,
+              fileSize: fileBuffer.length,
+              numPages: pdfData.numpages,
+            })
+            return res.status(400).json({
+              error: 'No se pudo extraer texto del PDF escaneado. El PDF parece estar escaneado pero el OCR no pudo leerlo. Intenta con una imagen de mejor calidad o un PDF con texto seleccionable.',
+            })
+          }
+
+          extractedText = fullTextAnnotation.text
+          logger.info(`Texto extraído del PDF escaneado (OCR): ${extractedText.length} caracteres`)
         }
-
-        extractedText = fullTextAnnotation.text
-        logger.info(`Texto extraído del PDF: ${extractedText.length} caracteres`)
       } catch (pdfError) {
         logger.error('Error al procesar PDF:', pdfError)
-        return res.status(400).json({
-          error: 'Error al procesar el PDF. Asegúrate de que sea un PDF válido con texto legible.',
-          details: process.env.NODE_ENV === 'development' ? pdfError.message : undefined,
-        })
+        
+        // Si pdf-parse falla, intentar con Google Cloud Vision directamente
+        try {
+          logger.info('Intentando procesar PDF con Google Cloud Vision como fallback...')
+          const [result] = await visionClient.documentTextDetection({
+            image: { content: fileBuffer },
+          })
+
+          const fullTextAnnotation = result.fullTextAnnotation
+          if (fullTextAnnotation && fullTextAnnotation.text && fullTextAnnotation.text.length > 50) {
+            extractedText = fullTextAnnotation.text
+            logger.info(`Texto extraído del PDF (fallback OCR): ${extractedText.length} caracteres`)
+          } else {
+            throw new Error('No se pudo extraer texto con ningún método')
+          }
+        } catch (fallbackError) {
+          logger.error('Error en fallback de procesamiento PDF:', fallbackError)
+          return res.status(400).json({
+            error: 'Error al procesar el PDF. Asegúrate de que sea un PDF válido con texto legible o seleccionable.',
+            details: process.env.NODE_ENV === 'development' ? pdfError.message : undefined,
+          })
+        }
       }
     } else {
       // Para imágenes (JPG, PNG, etc.)
