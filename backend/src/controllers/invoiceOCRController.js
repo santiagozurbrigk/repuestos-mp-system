@@ -1139,15 +1139,19 @@ function parseInvoiceText(text) {
             if (descripcion) {
               // Patrón: código numérico o alfanumérico al inicio de la descripción
               // Ejemplo: "62547 RAD.CALEF.VW GOL" -> código: "62547", descripción: "RAD.CALEF.VW GOL"
-              const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,15})\s+(.+)$/)
+              const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,20})\s+(.+)$/)
               if (codeAtStartMatch) {
                 const potentialCode = codeAtStartMatch[1].trim()
                 const remainingDesc = codeAtStartMatch[2].trim()
                 
-                // Verificar que el código potencial no sea parte de la descripción
-                if (potentialCode.length >= 3 && potentialCode.length <= 20 && 
-                    !potentialCode.toLowerCase().includes('descripcion') &&
-                    !potentialCode.toLowerCase().includes('desp') &&
+                // Verificar que el código potencial no sea parte de la descripción ni un encabezado
+                const potentialCodeLower = potentialCode.toLowerCase()
+                if (potentialCode.length >= 3 && potentialCode.length <= 25 && 
+                    potentialCodeLower !== 'descripcion' &&
+                    potentialCodeLower !== 'descripción' &&
+                    potentialCodeLower !== 'desp' &&
+                    !potentialCodeLower.includes('descripcion') &&
+                    !potentialCodeLower.includes('desp') &&
                     remainingDesc.length > 5) {
                   codigo = potentialCode
                   descripcion = remainingDesc // Actualizar descripción sin el código
@@ -1157,18 +1161,19 @@ function parseInvoiceText(text) {
             }
             
             // Si no encontramos código en la descripción, buscar en líneas anteriores
+            // IMPORTANTE: Excluir explícitamente "DESCRIPCION" y otros encabezados
             if (!codigo && descripcion) {
               const descIndex = lines.findIndex((l, idx) => idx < i && l.trim() === descripcion)
               if (descIndex > 0) {
                 // Buscar código en líneas anteriores a la descripción
                 for (let j = Math.max(descIndex - 5, tableStartIndex); j < descIndex; j++) {
                   const codeLine = lines[j].trim()
-                  const codeLineLower = codeLine.toLowerCase()
+                  const codeLineLower = codeLine.toLowerCase().trim()
                   
-                  // Excluir encabezados de columna y palabras que NO son códigos
+                  // EXCLUIR EXPLÍCITAMENTE encabezados comunes (comparación exacta primero)
                   if (codeLineLower === 'cant' || codeLineLower === 'cant.' ||
                       codeLineLower === 'articulo' || codeLineLower === 'artículo' ||
-                      codeLineLower === 'marca' || codeLineLower === 'codigo' ||
+                      codeLineLower === 'marca' || codeLineLower === 'codigo' || codeLineLower === 'código' ||
                       codeLineLower === 'descripcion' || codeLineLower === 'descripción' ||
                       codeLineLower === 'desp. imp.' || codeLineLower === 'desp imp' ||
                       codeLineLower === 'precio unit' || codeLineLower === 'precio unit.' ||
@@ -1177,12 +1182,16 @@ function parseInvoiceText(text) {
                       codeLineLower === 'total' ||
                       codeLineLower.includes('precio') || codeLineLower.includes('importe') ||
                       codeLineLower.includes('flete') || codeLineLower.includes('forma de pago')) {
+                    logger.info(`Línea ${j} excluida como encabezado: "${codeLine}"`)
                     continue
                   }
                   
                   // Buscar código: número de 3+ dígitos o alfanumérico corto
-                  if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,20}$/.test(codeLine)) &&
-                      codeLine.length < 25 &&
+                  // EXCLUIR explícitamente si es solo "DESCRIPCION" o similar
+                  if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,25}$/.test(codeLine)) &&
+                      codeLine.length < 30 &&
+                      codeLineLower !== 'descripcion' &&
+                      codeLineLower !== 'descripción' &&
                       !codeLineLower.includes('marca') &&
                       !codeLineLower.includes('codigo') &&
                       !codeLineLower.includes('descripcion') &&
