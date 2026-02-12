@@ -1798,8 +1798,26 @@ function parseInvoiceText(text) {
       // NUEVO PATRÓN ESPECÍFICO: CANTIDAD CÓDIGO DESCRIPCIÓN PRECIO_UNITARIO PRECIO_TOTAL
       // Formato: "1 62547 RAD. CALEF. VW GOL 08-> TREND $93.356,09 $93.356,09"
       // Este patrón es común en facturas donde no hay marca separada
+      // PATRÓN MEJORADO: más flexible con espacios y símbolo $ opcional antes o después
       const patternCantCodigoDesc = /^(\d{1,2})\s+(\d{3,}|[A-Z0-9]{3,25})\s+([A-ZÁÉÍÓÚÑ\s\.\-\>]{5,100})\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
-      const matchCantCodigoDesc = line.match(patternCantCodigoDesc)
+      let matchCantCodigoDesc = line.match(patternCantCodigoDesc)
+      
+      // Si no coincide, intentar patrón más flexible (permite más espacios y variaciones)
+      if (!matchCantCodigoDesc) {
+        const patternFlexible = /^(\d{1,2})\s+(\d{3,}|[A-Z0-9]{3,25})\s+([A-ZÁÉÍÓÚÑ\s\.\-\>]{5,120})\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s+\$?\s*(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
+        matchCantCodigoDesc = line.match(patternFlexible)
+      }
+      
+      // Si aún no coincide, intentar sin requerir $ (más flexible)
+      if (!matchCantCodigoDesc) {
+        const patternSinDolar = /^(\d{1,2})\s+(\d{3,}|[A-Z0-9]{3,25})\s+([A-ZÁÉÍÓÚÑ\s\.\-\>]{5,120})\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)\s+(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)$/
+        matchCantCodigoDesc = line.match(patternSinDolar)
+      }
+      
+      // Log para debugging
+      if (!matchCantCodigoDesc && line.match(/\d{1,2}\s+\d{3,}/) && line.match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/g)?.length >= 2) {
+        logger.info(`⚠️ Línea ${i} parece ser producto pero no coincide con patrón: "${line}"`)
+      }
       
       if (matchCantCodigoDesc) {
         const [, cantidad, codigo, descripcion, precioUnitStr, totalStr] = matchCantCodigoDesc
