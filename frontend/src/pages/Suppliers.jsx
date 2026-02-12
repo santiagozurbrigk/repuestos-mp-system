@@ -1297,6 +1297,7 @@ export default function Suppliers() {
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
               <h2 className="text-xl font-semibold text-gray-900">Escanear Factura Completa</h2>
+              <p className="text-xs text-gray-500 mt-1">Acepta imágenes (JPG, PNG) o PDFs</p>
               <button
                 onClick={() => {
                   stopCamera()
@@ -1328,12 +1329,12 @@ export default function Suppliers() {
                   >
                     <Upload className="w-10 h-10 text-primary-600 mb-2" />
                     <span className="text-sm font-medium text-gray-700">Subir Archivo</span>
-                    <span className="text-xs text-gray-500 mt-1">Desde dispositivo</span>
+                    <span className="text-xs text-gray-500 mt-1">Imagen o PDF</span>
                     <input
                       id="invoice-image-upload"
                       name="invoice-image-upload"
                       type="file"
-                      accept="image/*,application/pdf"
+                      accept="image/*,.pdf,application/pdf"
                       capture="environment"
                       className="sr-only"
                       onChange={handleImageUpload}

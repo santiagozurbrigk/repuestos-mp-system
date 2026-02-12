@@ -224,42 +224,89 @@ export const processInvoiceImage = async (req, res) => {
       })
     }
 
-    const imageBuffer = req.file.buffer
+    const fileBuffer = req.file.buffer
+    const fileMimeType = req.file.mimetype
+    const isPDF = fileMimeType === 'application/pdf'
 
-    logger.info('Procesando imagen de factura con Google Cloud Vision...')
-
-    // Llamar a Google Cloud Vision Document Text Detection
-    const [result] = await visionClient.documentTextDetection({
-      image: { content: imageBuffer },
+    logger.info(`Procesando ${isPDF ? 'PDF' : 'imagen'} de factura con Google Cloud Vision...`, {
+      mimeType: fileMimeType,
+      fileSize: fileBuffer.length,
     })
 
-    const fullTextAnnotation = result.fullTextAnnotation
+    let extractedText = null
 
-    if (!fullTextAnnotation || !fullTextAnnotation.text) {
-      logger.warn('No se encontró texto en la imagen', {
-        hasAnnotation: !!fullTextAnnotation,
-        hasText: !!fullTextAnnotation?.text,
-        fileSize: imageBuffer.length,
-        fileType: req.file.mimetype,
+    if (isPDF) {
+      // Para PDFs, usar el método específico de Google Cloud Vision
+      // Google Cloud Vision puede procesar PDFs directamente
+      try {
+        // Para PDFs, necesitamos usar batchAnnotateFiles o convertir a imagen
+        // La forma más simple es usar documentTextDetection con el PDF como contenido
+        const [result] = await visionClient.documentTextDetection({
+          image: { content: fileBuffer },
+        })
+
+        const fullTextAnnotation = result.fullTextAnnotation
+
+        if (!fullTextAnnotation || !fullTextAnnotation.text) {
+          logger.warn('No se encontró texto en el PDF', {
+            hasAnnotation: !!fullTextAnnotation,
+            hasText: !!fullTextAnnotation?.text,
+            fileSize: fileBuffer.length,
+          })
+          return res.status(400).json({
+            error: 'No se pudo extraer texto del PDF. Asegúrate de que el PDF contenga texto seleccionable o sea una imagen escaneada clara.',
+          })
+        }
+
+        extractedText = fullTextAnnotation.text
+        logger.info(`Texto extraído del PDF: ${extractedText.length} caracteres`)
+      } catch (pdfError) {
+        logger.error('Error al procesar PDF:', pdfError)
+        return res.status(400).json({
+          error: 'Error al procesar el PDF. Asegúrate de que sea un PDF válido con texto legible.',
+          details: process.env.NODE_ENV === 'development' ? pdfError.message : undefined,
+        })
+      }
+    } else {
+      // Para imágenes (JPG, PNG, etc.)
+      const [result] = await visionClient.documentTextDetection({
+        image: { content: fileBuffer },
       })
-      return res.status(400).json({
-        error: 'No se pudo extraer texto de la imagen. Asegúrate de que sea una factura clara y legible. Si el problema persiste, intenta con una imagen de mayor resolución.',
-      })
+
+      const fullTextAnnotation = result.fullTextAnnotation
+
+      if (!fullTextAnnotation || !fullTextAnnotation.text) {
+        logger.warn('No se encontró texto en la imagen', {
+          hasAnnotation: !!fullTextAnnotation,
+          hasText: !!fullTextAnnotation?.text,
+          fileSize: fileBuffer.length,
+          fileType: fileMimeType,
+        })
+        return res.status(400).json({
+          error: 'No se pudo extraer texto de la imagen. Asegúrate de que sea una factura clara y legible. Si el problema persiste, intenta con una imagen de mayor resolución o usa un PDF.',
+        })
+      }
+
+      extractedText = fullTextAnnotation.text
     }
     
     // Verificar que el texto extraído tenga suficiente contenido
-    const extractedText = fullTextAnnotation.text
-    if (extractedText.length < 50) {
-      logger.warn('Texto extraído muy corto', { length: extractedText.length, preview: extractedText.substring(0, 100) })
+    if (!extractedText || extractedText.length < 50) {
+      logger.warn('Texto extraído muy corto', { 
+        length: extractedText?.length || 0, 
+        preview: extractedText?.substring(0, 100),
+        fileType: fileMimeType,
+      })
       return res.status(400).json({
-        error: 'El texto extraído de la imagen es muy corto. Asegúrate de que la imagen sea clara y contenga texto legible.',
+        error: `El texto extraído del ${isPDF ? 'PDF' : 'archivo'} es muy corto. Asegúrate de que ${isPDF ? 'el PDF contenga texto seleccionable o sea una imagen escaneada clara' : 'la imagen sea clara y contenga texto legible'}.`,
       })
     }
 
     // Parsear el texto extraído para encontrar datos de la factura
-    logger.info('Iniciando parsing del texto extraído', { 
+    logger.info(`Iniciando parsing del texto extraído desde ${isPDF ? 'PDF' : 'imagen'}`, { 
       textLength: extractedText.length,
-      preview: extractedText.substring(0, 500) 
+      preview: extractedText.substring(0, 500),
+      fileType: fileMimeType,
     })
     
     const parsedData = parseInvoiceText(extractedText)
