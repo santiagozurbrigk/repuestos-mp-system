@@ -71,15 +71,14 @@ export const getTodaySalesSummary = async (req, res) => {
     
     const { data: previousClosure } = await supabase
       .from('cash_closures')
-      .select('final_balance, bank_withdrawal')
+      .select('final_balance')
       .eq('closure_date', yesterdayStr)
       .maybeSingle()
 
-    // Calcular balance inicial: final_balance del día anterior - retiro bancario
+    // Calcular balance inicial: final_balance del día anterior
     let initialBalance = 0
     if (previousClosure) {
-      const withdrawal = previousClosure.bank_withdrawal || 0
-      initialBalance = parseFloat(previousClosure.final_balance || 0) - parseFloat(withdrawal)
+      initialBalance = parseFloat(previousClosure.final_balance || 0)
     }
 
     // Calcular totales solo de ventas que no están en cierres anteriores
@@ -155,7 +154,7 @@ export const getTodaySalesSummary = async (req, res) => {
 export const createCashClosure = async (req, res) => {
   try {
     const userId = req.user.id
-    const { closure_date } = req.body
+    const { closure_date, change } = req.body
 
     // Usar fecha local para evitar problemas de zona horaria
     const dateStr = closure_date ? closure_date : getLocalDateString()
@@ -220,15 +219,14 @@ export const createCashClosure = async (req, res) => {
     
     const { data: previousClosure } = await supabase
       .from('cash_closures')
-      .select('final_balance, bank_withdrawal')
+      .select('final_balance')
       .eq('closure_date', previousDateStr)
       .maybeSingle()
 
-    // Calcular balance inicial: final_balance del día anterior - retiro bancario
+    // Calcular balance inicial: final_balance del día anterior
     let initialBalance = 0
     if (previousClosure) {
-      const withdrawal = previousClosure.bank_withdrawal || 0
-      initialBalance = parseFloat(previousClosure.final_balance || 0) - parseFloat(withdrawal)
+      initialBalance = parseFloat(previousClosure.final_balance || 0)
     }
 
     // Calcular totales
@@ -270,6 +268,12 @@ export const createCashClosure = async (req, res) => {
       }
     })
 
+    // Sumar el cambio al efectivo (efectivo del día anterior)
+    const changeAmount = parseFloat(change || 0)
+    if (changeAmount > 0) {
+      totalCash += changeAmount
+    }
+
     // Calcular comisiones de empleados (solo sobre ventas, no egresos)
     const fernandoCommission = totalSales * 0.10
     const pedroCommission = totalSales * 0.15
@@ -292,6 +296,7 @@ export const createCashClosure = async (req, res) => {
       fernando_commission: fernandoCommission,
       pedro_commission: pedroCommission,
       final_balance: finalBalance,
+      change: changeAmount,
     }
 
     const { data, error } = await supabase

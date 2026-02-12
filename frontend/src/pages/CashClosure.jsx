@@ -21,8 +21,7 @@ export default function CashClosure() {
   const [closures, setClosures] = useState([])
   const [loading, setLoading] = useState(true)
   const [closing, setClosing] = useState(false)
-  const [editingWithdrawal, setEditingWithdrawal] = useState({})
-  const [withdrawalAmounts, setWithdrawalAmounts] = useState({})
+  const [changeAmount, setChangeAmount] = useState('')
 
   useEffect(() => {
     fetchTodaySummary()
@@ -43,35 +42,10 @@ export default function CashClosure() {
       setLoading(true)
       const response = await api.get('/cash-closure?limit=30')
       setClosures(response.data)
-      // Inicializar withdrawalAmounts con los valores existentes
-      const withdrawals = {}
-      response.data.forEach((closure) => {
-        if (closure.bank_withdrawal !== null && closure.bank_withdrawal !== undefined) {
-          withdrawals[closure.id] = closure.bank_withdrawal.toString()
-        }
-      })
-      setWithdrawalAmounts(withdrawals)
     } catch (err) {
       error('Error al cargar los cierres de caja')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleWithdrawalChange = (closureId, value) => {
-    setWithdrawalAmounts({ ...withdrawalAmounts, [closureId]: value })
-  }
-
-  const handleSaveWithdrawal = async (closureId) => {
-    try {
-      const amount = parseFloat(withdrawalAmounts[closureId] || 0)
-      await api.put(`/cash-closure/${closureId}`, { bank_withdrawal: amount })
-      success('Retiro bancario guardado correctamente')
-      setEditingWithdrawal({ ...editingWithdrawal, [closureId]: false })
-      await fetchClosures()
-      await fetchTodaySummary() // Actualizar el resumen para recalcular balance inicial
-    } catch (err) {
-      error('Error al guardar el retiro bancario')
     }
   }
 
@@ -93,7 +67,9 @@ export default function CashClosure() {
       setClosing(true)
       await api.post('/cash-closure', {
         closure_date: todayStr,
+        change: parseFloat(changeAmount || 0),
       })
+      setChangeAmount('') // Limpiar el input después de cerrar
       await fetchTodaySummary()
       await fetchClosures()
       success('Caja cerrada correctamente')
@@ -168,12 +144,38 @@ export default function CashClosure() {
                 </div>
               </div>
             </div>
+            {/* Input de Cambio */}
+            {!todaySummary.isClosed && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Cambio (efectivo del día anterior)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={changeAmount}
+                  onChange={(e) => setChangeAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Ingresa el efectivo que sobró del día anterior. Se sumará al efectivo del día.
+                </p>
+              </div>
+            )}
+            
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
                 <div className="text-xs font-medium text-blue-700 mb-1">Efectivo</div>
                 <div className="text-xl font-bold text-blue-900">
-                  ${parseFloat(todaySummary.total_cash || 0).toFixed(2)}
+                  ${(parseFloat(todaySummary.total_cash || 0) + parseFloat(changeAmount || 0)).toFixed(2)}
                 </div>
+                {changeAmount && parseFloat(changeAmount) > 0 && (
+                  <div className="text-xs text-blue-600 mt-1">
+                    (+ ${parseFloat(changeAmount).toFixed(2)} cambio)
+                  </div>
+                )}
               </div>
               <div className="bg-green-50 p-4 rounded-xl border border-green-200">
                 <div className="text-xs font-medium text-green-700 mb-1">Débito</div>
@@ -354,54 +356,6 @@ export default function CashClosure() {
                       <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-200">
                         <span className="text-gray-600 text-xs block mb-1">Ventas</span>
                         <span className="font-bold text-gray-900">{closure.sales_count}</span>
-                      </div>
-                      <div className="bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-200">
-                        <span className="text-emerald-700 text-xs block mb-1">Retiro Banco</span>
-                        {editingWithdrawal[closure.id] ? (
-                          <div className="flex items-center space-x-2">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={withdrawalAmounts[closure.id] || ''}
-                              onChange={(e) => handleWithdrawalChange(closure.id, e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                              placeholder="0.00"
-                              autoFocus
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault()
-                                  handleSaveWithdrawal(closure.id)
-                                }
-                                if (e.key === 'Escape') {
-                                  setEditingWithdrawal({ ...editingWithdrawal, [closure.id]: false })
-                                }
-                              }}
-                            />
-                            <button
-                              onClick={() => handleSaveWithdrawal(closure.id)}
-                              className="px-2 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700"
-                            >
-                              ✓
-                            </button>
-                            <button
-                              onClick={() => setEditingWithdrawal({ ...editingWithdrawal, [closure.id]: false })}
-                              className="px-2 py-1 text-xs bg-gray-400 text-white rounded hover:bg-gray-500"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ) : (
-                          <div 
-                            className="cursor-pointer hover:bg-emerald-100 rounded px-1 -mx-1"
-                            onClick={() => setEditingWithdrawal({ ...editingWithdrawal, [closure.id]: true })}
-                          >
-                            <span className="font-bold text-emerald-900">
-                              ${parseFloat(closure.bank_withdrawal || 0).toFixed(2)}
-                            </span>
-                            <span className="text-xs text-emerald-600 ml-1">(click para editar)</span>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>
