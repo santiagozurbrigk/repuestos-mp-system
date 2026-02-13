@@ -238,6 +238,9 @@ export default function Suppliers() {
       {
         item_name: '',
         quantity: 1,
+        code: null,
+        brand: null,
+        description: null,
         unit_price: 0,
         total_price: 0,
         description: '',
@@ -404,13 +407,18 @@ export default function Suppliers() {
                 ? parseFloat(item.total_price) 
                 : undefined
               
+              // Extraer código del campo description si viene como "Código: 24703"
+              const codeMatch = item.description?.match(/Código:\s*(.+)/i)
+              const code = codeMatch ? codeMatch[1].trim() : (item.code || null)
+              
               return {
                 item_name: item.item_name,
                 quantity: isNaN(quantity) ? 1 : quantity,
                 unit_price: unitPrice !== undefined && !isNaN(unitPrice) ? unitPrice : undefined,
                 total_price: totalPrice !== undefined && !isNaN(totalPrice) ? totalPrice : undefined,
-                description: item.description || null,
-                brand: item.brand || null, // Marca del producto
+                description: code ? `Código: ${code}` : null,
+                brand: item.brand || null, // Marca del repuesto (NO del vehículo)
+                code: code || null, // Código del producto
               }
             })
 
@@ -1212,43 +1220,78 @@ export default function Suppliers() {
                           <thead className="bg-gray-50">
                             <tr>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Producto</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Código</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-28">Marca Repuesto</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-24">Cantidad</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-16"></th>
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {invoiceItems.map((item, index) => (
-                              <tr key={index}>
-                                <td className="px-3 py-2">
-                                  <input
-                                    type="text"
-                                    value={item.item_name || ''}
-                                    onChange={(e) => handleUpdateInvoiceItem(index, 'item_name', e.target.value)}
-                                    placeholder="Nombre del producto"
-                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                  />
-                                </td>
-                                <td className="px-3 py-2">
-                                  <input
-                                    type="number"
-                                    step="1"
-                                    min="1"
-                                    value={item.quantity || 1}
-                                    onChange={(e) => handleUpdateInvoiceItem(index, 'quantity', parseInt(e.target.value) || 1)}
-                                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                  />
-                                </td>
-                                <td className="px-3 py-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveInvoiceItem(index)}
-                                    className="text-red-600 hover:text-red-700 p-1"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
+                            {invoiceItems.map((item, index) => {
+                              // Extraer código del campo description si viene como "Código: 24703"
+                              const codeMatch = item.description?.match(/Código:\s*(.+)/i)
+                              const extractedCode = codeMatch ? codeMatch[1].trim() : (item.code || item.description || '')
+                              
+                              return (
+                                <tr key={index}>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="text"
+                                      value={item.item_name || ''}
+                                      onChange={(e) => handleUpdateInvoiceItem(index, 'item_name', e.target.value)}
+                                      placeholder="Nombre del producto"
+                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="text"
+                                      value={extractedCode}
+                                      onChange={(e) => {
+                                        // Actualizar el código en el campo description
+                                        const updatedItems = [...invoiceItems]
+                                        updatedItems[index] = {
+                                          ...updatedItems[index],
+                                          description: e.target.value ? `Código: ${e.target.value}` : null,
+                                          code: e.target.value || null
+                                        }
+                                        setInvoiceItems(updatedItems)
+                                      }}
+                                      placeholder="Código"
+                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="text"
+                                      value={item.brand || ''}
+                                      onChange={(e) => handleUpdateInvoiceItem(index, 'brand', e.target.value)}
+                                      placeholder="Marca repuesto"
+                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      min="1"
+                                      value={item.quantity || 1}
+                                      onChange={(e) => handleUpdateInvoiceItem(index, 'quantity', parseInt(e.target.value) || 1)}
+                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveInvoiceItem(index)}
+                                      className="text-red-600 hover:text-red-700 p-1"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>

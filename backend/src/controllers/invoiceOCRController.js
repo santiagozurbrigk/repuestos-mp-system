@@ -1185,7 +1185,11 @@ function parseInvoiceText(text) {
             }
             
             // Buscar descripción (texto largo con letras, no solo números)
-            // Buscar desde más cerca hacia atrás
+            // MEJORADO: Agrupar múltiples líneas consecutivas para formar la descripción completa
+            // El OCR puede separar "BULBO" y "CHEV. CORSA" en líneas diferentes
+            const descriptionParts = []
+            let foundFirstDescription = false
+            
             for (let j = i - 1; j >= Math.max(i - 10, tableStartIndex); j--) {
               const prevLine = lines[j].trim()
               const prevLineLower = prevLine.toLowerCase().trim()
@@ -1212,13 +1216,25 @@ function parseInvoiceText(text) {
               
               if (isHeader) {
                 logger.info(`Línea ${j} es encabezado de columna, ignorando: ${prevLine}`)
+                // Si encontramos un encabezado, detener la búsqueda de descripción
+                if (foundFirstDescription) break
                 continue
               }
               
-              // Verificar que sea una descripción válida
-              if (prevLine.length > 5 && 
+              // Verificar si es un número (precio, cantidad, código numérico) - detener si encontramos números grandes
+              const hasLargeNumber = prevLine.match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/)
+              const isOnlyNumber = /^\d{1,2}$/.test(prevLine) || /^\d{3,}$/.test(prevLine)
+              
+              if (hasLargeNumber || isOnlyNumber) {
+                // Si ya encontramos parte de la descripción, detener aquí
+                if (foundFirstDescription) break
+                continue
+              }
+              
+              // Verificar que sea una descripción válida (texto con letras)
+              if (prevLine.length > 2 && 
                   prevLine.length < 120 &&
-                  /[A-ZÁÉÍÓÚÑ]/.test(prevLine) &&
+                  /[A-ZÁÉÍÓÚÑa-záéíóúñ]/.test(prevLine) &&
                   !prevLine.match(/^\d+$/) &&
                   !prevLine.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
                   !prevLine.match(/^\d+%$/) &&
@@ -1231,30 +1247,93 @@ function parseInvoiceText(text) {
                   !prevLineLower.includes('flete') &&
                   !prevLineLower.includes('cliente') &&
                   !prevLineLower.includes('vendedor')) {
-                // Preferir la descripción más larga y completa
-                if (!descripcion || (prevLine.length > descripcion.length && prevLine.length > 10)) {
-                  descripcion = prevLine
-                  logger.info(`Descripción encontrada en línea ${j}: ${descripcion}`)
+                
+                // Agregar esta línea a las partes de la descripción
+                descriptionParts.unshift(prevLine) // unshift para mantener el orden
+                foundFirstDescription = true
+                logger.info(`Parte de descripción encontrada en línea ${j}: ${prevLine}`)
+              } else if (foundFirstDescription) {
+                // Si ya encontramos descripción y esta línea no es válida, detener
+                break
+              }
+            }
+            
+            // Unir todas las partes de la descripción
+            if (descriptionParts.length > 0) {
+              descripcion = descriptionParts.join(' ').trim()
+              logger.info(`✅ Descripción completa agrupada: "${descripcion}" (de ${descriptionParts.length} partes)`)
+            }
+            
+            // Buscar código y marca en líneas anteriores a la descripción completa
+            // PRIORIDAD 1: Buscar código y marca en líneas separadas antes de la descripción
+            if (descripcion && descriptionParts.length > 0) {
+              // Encontrar el índice de la primera línea de la descripción
+              const firstDescLineIndex = i - descriptionParts.length
+              
+              // Buscar código y marca en las líneas anteriores a la descripción (hasta 5 líneas antes)
+              for (let j = Math.max(firstDescLineIndex - 5, tableStartIndex); j < firstDescLineIndex; j++) {
+                const searchLine = lines[j].trim()
+                const searchLineLower = searchLine.toLowerCase().trim()
+                
+                // Excluir encabezados
+                const isHeader = searchLineLower === 'marca' ||
+                                searchLineLower === 'codigo' ||
+                                searchLineLower === 'código' ||
+                                searchLineLower === 'cant' ||
+                                searchLineLower === 'cant.' ||
+                                searchLineLower === 'articulo' ||
+                                searchLineLower === 'artículo' ||
+                                searchLineLower === 'descripcion' ||
+                                searchLineLower === 'descripción' ||
+                                searchLineLower === 'precio unit' ||
+                                searchLineLower === 'precio unit.' ||
+                                searchLineLower === 'p. unit' ||
+                                searchLineLower === 'importe' ||
+                                searchLineLower === 'total'
+                
+                if (isHeader) {
+                  continue
+                }
+                
+                // Buscar marca del repuesto primero (texto corto en mayúsculas, 2-15 caracteres)
+                if (!marca && /^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(searchLine) && searchLine.length < 20) {
+                  const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                         'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                         'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+                  const isVehicleBrand = vehicleBrands.some(vb => searchLine.toUpperCase() === vb)
+                  
+                  if (!isVehicleBrand) {
+                    marca = searchLine
+                    logger.info(`✅ Marca del repuesto encontrada en línea ${j}: ${marca}`)
+                    continue
+                  }
+                }
+                
+                // Buscar código (número de 3+ dígitos o alfanumérico corto)
+                if (!codigo && ((/^\d{3,}$/.test(searchLine) || /^[A-Z0-9\s\-]{3,25}$/.test(searchLine)) &&
+                    searchLine.length < 30 &&
+                    !searchLineLower.includes('marca') &&
+                    !searchLineLower.includes('codigo') &&
+                    !searchLineLower.includes('descripcion') &&
+                    !searchLineLower.includes('precio') &&
+                    !searchLineLower.includes('importe'))) {
+                  codigo = searchLine
+                  logger.info(`✅ Código encontrado en línea ${j}: ${codigo}`)
                 }
               }
             }
             
-            // Buscar código/artículo - ESTRATEGIA MEJORADA
-            // PRIORIDAD 1: Extraer código de la descripción si contiene números al inicio
-            if (descripcion) {
-              // Patrón mejorado: código numérico o alfanumérico al inicio de la descripción
-              // Ejemplo: "62547 RAD.CALEF.VW GOL" -> código: "62547", descripción: "RAD.CALEF.VW GOL"
+            // PRIORIDAD 2: Extraer código de la descripción si contiene números al inicio
+            if (descripcion && !codigo) {
               const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,25})\s+(.+)$/)
               if (codeAtStartMatch) {
                 const potentialCode = codeAtStartMatch[1].trim()
                 const remainingDesc = codeAtStartMatch[2].trim()
                 
-                // Verificar que el código potencial no sea un encabezado
                 const potentialCodeLower = potentialCode.toLowerCase().trim()
                 const isHeaderCode = potentialCodeLower === 'descripcion' ||
                                     potentialCodeLower === 'descripción' ||
                                     potentialCodeLower === 'desp' ||
-                                    potentialCodeLower === 'desp. imp.' ||
                                     potentialCodeLower === 'cant' ||
                                     potentialCodeLower === 'articulo' ||
                                     potentialCodeLower === 'marca' ||
@@ -1265,123 +1344,14 @@ function parseInvoiceText(text) {
                     potentialCode.length <= 25 && 
                     remainingDesc.length > 5) {
                   codigo = potentialCode
-                  descripcion = remainingDesc // Actualizar descripción sin el código
+                  descripcion = remainingDesc
                   logger.info(`✅ Código extraído del inicio de descripción: ${codigo}, nueva descripción: ${descripcion}`)
                 }
               }
             }
             
-            // PRIORIDAD 2: Extraer marca de la descripción si está presente
-            // Buscar marcas comunes de autos en la descripción (VW, FORD, CHEV, RENAULT, etc.)
+            // PRIORIDAD 3: Buscar marcas de repuestos en la descripción (NO marcas de vehículos)
             if (descripcion && !marca) {
-              const marcaPatterns = [
-                /\b(VW|FORD|CHEV|CHEVROLET|RENAULT|FIAT|PEUGEOT|CITROEN|TOYOTA|HONDA|NISSAN|HYUNDAI|KIA|BMW|MERCEDES|AUDI|VOLVO|OPEL|SEAT|SKODA)\b/i,
-                /\b(MD|ELIFEL|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM)\b/i,
-              ]
-              
-              for (const pattern of marcaPatterns) {
-                const marcaMatch = descripcion.match(pattern)
-                if (marcaMatch) {
-                  marca = marcaMatch[1].toUpperCase()
-                  logger.info(`Marca extraída de descripción: ${marca}`)
-                  break
-                }
-              }
-            }
-            
-            // PRIORIDAD 3: Si no encontramos código en la descripción, buscar en líneas anteriores
-            // IMPORTANTE: Excluir explícitamente "DESCRIPCION" y otros encabezados
-            if (!codigo && descripcion) {
-              const descIndex = lines.findIndex((l, idx) => idx < i && l.trim() === descripcion)
-              if (descIndex > 0) {
-                // Buscar código en líneas anteriores a la descripción
-                for (let j = Math.max(descIndex - 5, tableStartIndex); j < descIndex; j++) {
-                  const codeLine = lines[j].trim()
-                  const codeLineLower = codeLine.toLowerCase().trim()
-                  
-                  // EXCLUIR EXPLÍCITAMENTE encabezados comunes (comparación exacta primero)
-                  const isHeaderCode = codeLineLower === 'cant' ||
-                                      codeLineLower === 'cant.' ||
-                                      codeLineLower === 'articulo' ||
-                                      codeLineLower === 'artículo' ||
-                                      codeLineLower === 'marca' ||
-                                      codeLineLower === 'codigo' ||
-                                      codeLineLower === 'código' ||
-                                      codeLineLower === 'descripcion' ||
-                                      codeLineLower === 'descripción' ||
-                                      codeLineLower === 'desp. imp.' ||
-                                      codeLineLower === 'desp imp' ||
-                                      codeLineLower === 'precio unit' ||
-                                      codeLineLower === 'precio unit.' ||
-                                      codeLineLower === 'p. unit' ||
-                                      codeLineLower === 'importe' ||
-                                      codeLineLower === 'bonif' ||
-                                      codeLineLower === 'dto' ||
-                                      codeLineLower === 'total'
-                  
-                  if (isHeaderCode) {
-                    logger.info(`Línea ${j} excluida como encabezado: "${codeLine}"`)
-                    continue
-                  }
-                  
-                  // Buscar código: número de 3+ dígitos o alfanumérico corto
-                  // EXCLUIR explícitamente si contiene palabras de encabezado
-                  if ((/^\d{3,}$/.test(codeLine) || /^[A-Z0-9\s\-]{3,25}$/.test(codeLine)) &&
-                      codeLine.length < 30 &&
-                      !codeLineLower.includes('marca') &&
-                      !codeLineLower.includes('codigo') &&
-                      !codeLineLower.includes('descripcion') &&
-                      !codeLineLower.includes('desp') &&
-                      !codeLineLower.includes('precio') &&
-                      !codeLineLower.includes('importe')) {
-                    codigo = codeLine
-                    logger.info(`✅ Código encontrado en línea separada ${j}: ${codigo}`)
-                    break
-                  }
-                }
-              }
-            }
-            
-            // Buscar marca del REPUESTO (NO del vehículo) - PRIORIDAD 1: Buscar en línea separada antes del código
-            // La marca del repuesto (MD, ELIFEL, SADAR, etc.) generalmente está en una columna separada antes del código
-            if (!marca && codigo) {
-              const codeIndex = lines.findIndex((l, idx) => idx < i && l.trim() === codigo)
-              if (codeIndex > 0) {
-                for (let j = Math.max(codeIndex - 3, tableStartIndex); j < codeIndex; j++) {
-                  const marcaLine = lines[j].trim()
-                  const marcaLineLower = marcaLine.toLowerCase().trim()
-                  
-                  // Excluir encabezados
-                  if (marcaLineLower === 'marca' ||
-                      marcaLineLower === 'codigo' ||
-                      marcaLineLower === 'cant' ||
-                      marcaLineLower === 'articulo' ||
-                      marcaLineLower === 'descripcion') {
-                    continue
-                  }
-                  
-                  // Buscar marca del repuesto: texto corto en mayúsculas (2-15 caracteres)
-                  // Excluir marcas de vehículos comunes
-                  const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
-                                         'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
-                                         'VOLVO', 'OPEL', 'SEAT', 'SKODA']
-                  const isVehicleBrand = vehicleBrands.some(vb => marcaLine.toUpperCase() === vb)
-                  
-                  if (/^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(marcaLine) &&
-                      marcaLine.length < 20 &&
-                      !isVehicleBrand) {
-                    marca = marcaLine
-                    logger.info(`✅ Marca del repuesto encontrada en línea separada ${j}: ${marca}`)
-                    break
-                  }
-                }
-              }
-            }
-            
-            // PRIORIDAD 2: Si no encontramos marca en línea separada, buscar marcas de repuestos en la descripción
-            // (pero NO marcas de vehículos)
-            if (descripcion && !marca) {
-              // Solo buscar marcas de repuestos, NO marcas de vehículos
               const repuestoBrandPatterns = [
                 /\b(MD|ELIFEL|SADAR|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM|FILTRON|WIX|ACDELCO|MOOG|MONROE|KYB|BILSTEIN)\b/i,
               ]
