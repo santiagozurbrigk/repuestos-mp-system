@@ -1342,25 +1342,8 @@ function parseInvoiceText(text) {
               }
             }
             
-            // Buscar marca - PRIORIDAD 1: Extraer de la descripción si está presente
-            if (descripcion && !marca) {
-              // Buscar marcas comunes de autos en la descripción (VW, FORD, CHEV, RENAULT, etc.)
-              const marcaPatterns = [
-                /\b(VW|FORD|CHEV|CHEVROLET|RENAULT|FIAT|PEUGEOT|CITROEN|TOYOTA|HONDA|NISSAN|HYUNDAI|KIA|BMW|MERCEDES|AUDI|VOLVO|OPEL|SEAT|SKODA)\b/i,
-                /\b(MD|ELIFEL|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM)\b/i,
-              ]
-              
-              for (const pattern of marcaPatterns) {
-                const marcaMatch = descripcion.match(pattern)
-                if (marcaMatch) {
-                  marca = marcaMatch[1].toUpperCase()
-                  logger.info(`✅ Marca extraída de descripción: ${marca}`)
-                  break
-                }
-              }
-            }
-            
-            // PRIORIDAD 2: Buscar marca en línea separada antes del código
+            // Buscar marca del REPUESTO (NO del vehículo) - PRIORIDAD 1: Buscar en línea separada antes del código
+            // La marca del repuesto (MD, ELIFEL, SADAR, etc.) generalmente está en una columna separada antes del código
             if (!marca && codigo) {
               const codeIndex = lines.findIndex((l, idx) => idx < i && l.trim() === codigo)
               if (codeIndex > 0) {
@@ -1377,13 +1360,38 @@ function parseInvoiceText(text) {
                     continue
                   }
                   
-                  // Buscar marca: texto corto en mayúsculas
+                  // Buscar marca del repuesto: texto corto en mayúsculas (2-15 caracteres)
+                  // Excluir marcas de vehículos comunes
+                  const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                         'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                         'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+                  const isVehicleBrand = vehicleBrands.some(vb => marcaLine.toUpperCase() === vb)
+                  
                   if (/^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(marcaLine) &&
-                      marcaLine.length < 20) {
+                      marcaLine.length < 20 &&
+                      !isVehicleBrand) {
                     marca = marcaLine
-                    logger.info(`✅ Marca encontrada en línea separada ${j}: ${marca}`)
+                    logger.info(`✅ Marca del repuesto encontrada en línea separada ${j}: ${marca}`)
                     break
                   }
+                }
+              }
+            }
+            
+            // PRIORIDAD 2: Si no encontramos marca en línea separada, buscar marcas de repuestos en la descripción
+            // (pero NO marcas de vehículos)
+            if (descripcion && !marca) {
+              // Solo buscar marcas de repuestos, NO marcas de vehículos
+              const repuestoBrandPatterns = [
+                /\b(MD|ELIFEL|SADAR|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM|FILTRON|WIX|ACDELCO|MOOG|MONROE|KYB|BILSTEIN)\b/i,
+              ]
+              
+              for (const pattern of repuestoBrandPatterns) {
+                const marcaMatch = descripcion.match(pattern)
+                if (marcaMatch) {
+                  marca = marcaMatch[1].toUpperCase()
+                  logger.info(`✅ Marca del repuesto extraída de descripción: ${marca}`)
+                  break
                 }
               }
             }
@@ -1415,12 +1423,22 @@ function parseInvoiceText(text) {
               // Remover palabras como "DESCRIPCION" si aparecen al inicio
               cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
               
-              // Remover marca si está al inicio de la descripción (ya la tenemos separada)
+              // Remover marca del REPUESTO si está al inicio de la descripción (ya la tenemos separada)
+              // NO remover marcas de vehículos, esas son parte del nombre del producto
               if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
-                cleanDescription = cleanDescription.substring(marca.length).trim()
+                // Verificar que no sea una marca de vehículo antes de removerla
+                const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                       'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                       'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+                const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
+                
+                if (!isVehicleBrand) {
+                  cleanDescription = cleanDescription.substring(marca.length).trim()
+                }
               }
               
-              // El nombre del producto es SOLO la descripción limpia (sin código ni marca)
+              // El nombre del producto es la descripción completa (incluye marca del vehículo si está presente)
+              // Solo removemos el código y la marca del repuesto, pero mantenemos todo lo demás
               const productName = cleanDescription
               
               // Verificar que no sea un elemento excluido
@@ -1610,8 +1628,29 @@ function parseInvoiceText(text) {
               }
               cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
               
-              // El nombre es SOLO la descripción (sin marca ni código)
+              // Remover marca del REPUESTO si está al inicio (ya la tenemos separada)
+              // NO remover marcas de vehículos, esas son parte del nombre del producto
+              if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
+                const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                       'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                       'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+                const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
+                
+                if (!isVehicleBrand) {
+                  cleanDescription = cleanDescription.substring(marca.length).trim()
+                }
+              }
+              
+              // El nombre es la descripción completa (incluye marca del vehículo si está presente)
               const productName = cleanDescription
+              
+              // Validar que la marca extraída sea del repuesto, NO del vehículo
+              const marcaLimpia = marca ? marca.trim() : null
+              const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                     'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                     'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+              const isVehicleBrand = marcaLimpia && vehicleBrands.some(vb => marcaLimpia.toUpperCase() === vb)
+              const marcaRepuesto = (marcaLimpia && !isVehicleBrand) ? marcaLimpia : null
               
               result.items.push({
                 item_name: productName,
@@ -1619,9 +1658,9 @@ function parseInvoiceText(text) {
                 unit_price: unitPrice,
                 total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
                 description: codigoLimpio ? `Código: ${codigoLimpio}` : null,
-                brand: marca ? marca.trim() : null, // Marca del producto
+                brand: marcaRepuesto, // Marca del repuesto (NO del vehículo)
               })
-              logger.info(`✅ Producto encontrado (patrón 1): "${productName}" - Cant: ${qty}, Precio Unit: ${unitPrice}, Total: ${totalPrice}, Código: ${codigoLimpio}`)
+              logger.info(`✅ Producto encontrado (patrón 1): "${productName}" - Cant: ${qty}, Precio Unit: ${unitPrice}, Total: ${totalPrice}, Código: ${codigoLimpio}, Marca Repuesto: ${marcaRepuesto || 'N/A'}`)
               continue
             } else {
               logger.warn(`❌ Producto rechazado (patrón 1) - Desc: "${descripcionLimpia}", Precio: ${unitPrice}, Total: ${totalPrice}, isValidUnitPrice: ${isValidUnitPrice}, isValidTotalPrice: ${isValidTotalPrice}, isValidDescription: ${isValidDescription}`)
@@ -1660,15 +1699,17 @@ function parseInvoiceText(text) {
                                 (unitPrice >= 50 && unitPrice < 100 && totalPrice >= 1000)
             
             if (isValidPrice && totalPrice >= 100 && totalPrice < 10000000) {
+              // Mantener el nombre completo del producto (incluye marca del vehículo si está presente)
+              const cleanProductName = descripcion.trim()
               result.items.push({
-                item_name: descripcion.trim(),
+                item_name: cleanProductName,
                 quantity: qty,
                 unit_price: unitPrice,
                 total_price: totalPrice || (qty * unitPrice),
                 description: null,
                 brand: null, // Sin marca en este patrón
               })
-              logger.info(`✅ Producto encontrado (patrón 2): ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
+              logger.info(`✅ Producto encontrado (patrón 2): ${cleanProductName} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
               continue
             } else {
               logger.warn(`❌ Producto rechazado (patrón 2): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}, isValidPrice: ${isValidPrice}`)
@@ -1710,15 +1751,17 @@ function parseInvoiceText(text) {
               logger.info(`Patrón 2b parseado - Desc: ${descripcion}, Cant: ${qty}, PrecioUnit: ${largeNumbers[0]} -> ${unitPrice}, Total: ${largeNumbers[1]} -> ${totalPrice}`)
               
               if (unitPrice >= 100 && unitPrice < 10000000 && totalPrice >= 100 && totalPrice < 10000000) {
+                // Mantener el nombre completo del producto (incluye marca del vehículo si está presente)
+                const cleanProductName = descripcion.trim()
                 result.items.push({
-                  item_name: descripcion,
+                  item_name: cleanProductName,
                   quantity: qty,
                   unit_price: unitPrice,
                   total_price: totalPrice,
                   description: null,
                   brand: null, // Sin marca en este patrón
                 })
-                logger.info(`✅ Producto encontrado (patrón 2b): ${descripcion} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
+                logger.info(`✅ Producto encontrado (patrón 2b): ${cleanProductName} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
                 continue
               }
             }
@@ -1737,8 +1780,10 @@ function parseInvoiceText(text) {
             const unitPrice = parseFloat(precioStr.replace(/\./g, '').replace(',', '.')) || 0
             
             if (unitPrice > 100 && unitPrice < 10000000 && descripcion.trim().length > 5) {
+              // Mantener el nombre completo del producto (incluye marca del vehículo si está presente)
+              const cleanProductName = descripcion.trim()
               result.items.push({
-                item_name: descripcion.trim(),
+                item_name: cleanProductName,
                 quantity: 1,
                 unit_price: unitPrice,
                 total_price: unitPrice,
@@ -1886,6 +1931,19 @@ function parseInvoiceText(text) {
         }
         cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
         
+        // Remover marca del REPUESTO si está presente (ya la tenemos separada)
+        // NO remover marcas de vehículos, esas son parte del nombre del producto
+        if (marca && cleanDescription.toUpperCase().includes(marca)) {
+          const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                 'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                 'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+          const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
+          
+          if (!isVehicleBrand) {
+            cleanDescription = cleanDescription.replace(new RegExp(`\\b${marca}\\b`, 'gi'), '').trim()
+          }
+        }
+        
         if (isValidPrice && cleanDescription.length > 3 && qty > 0 && qty <= 1000) {
           result.items.push({
             item_name: cleanDescription,
@@ -1943,16 +2001,37 @@ function parseInvoiceText(text) {
           }
           cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
           
-          // El nombre es SOLO la descripción (sin marca ni código)
+          // Remover marca del REPUESTO si está al inicio (ya la tenemos separada)
+          // NO remover marcas de vehículos, esas son parte del nombre del producto
+          if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
+            const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                   'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                   'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+            const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
+            
+            if (!isVehicleBrand) {
+              cleanDescription = cleanDescription.substring(marca.length).trim()
+            }
+          }
+          
+          // Validar que la marca extraída sea del repuesto, NO del vehículo
+          const marcaLimpia = marca ? marca.trim() : null
+          const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                 'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                 'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+          const isVehicleBrand = marcaLimpia && vehicleBrands.some(vb => marcaLimpia.toUpperCase() === vb)
+          const marcaRepuesto = (marcaLimpia && !isVehicleBrand) ? marcaLimpia : null
+          
+          // El nombre es la descripción completa (incluye marca del vehículo si está presente)
           result.items.push({
             item_name: cleanDescription,
             quantity: qty,
             unit_price: unitPrice,
             total_price: totalPrice > 0 ? totalPrice : (qty * unitPrice),
             description: codigo ? `Código: ${codigo}` : null,
-            brand: marca ? marca.trim() : null, // Marca del producto
+            brand: marcaRepuesto, // Marca del repuesto (NO del vehículo)
           })
-          logger.info(`✅ Producto encontrado (patrón 1 tabla): ${marca.trim()} ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
+          logger.info(`✅ Producto encontrado (patrón 1 tabla): Marca Repuesto: ${marcaRepuesto || 'N/A'}, Producto: ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
           continue
         } else {
           logger.warn(`❌ Producto rechazado (patrón 1 tabla): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}, isValidPrice: ${isValidPrice}`)
@@ -1989,15 +2068,17 @@ function parseInvoiceText(text) {
                               (unitPrice >= 50 && unitPrice < 100 && totalPrice >= 1000)
           
           if (isValidPrice && totalPrice >= 100 && totalPrice < 10000000) {
+            // Mantener el nombre completo del producto (incluye marca del vehículo si está presente)
+            const cleanProductName = descripcion.trim()
             result.items.push({
-              item_name: descripcion.trim(),
+              item_name: cleanProductName,
               quantity: qty,
               unit_price: unitPrice,
               total_price: totalPrice || (qty * unitPrice),
               description: null,
               brand: null, // Sin marca en este patrón
             })
-            logger.info(`✅ Producto encontrado (patrón 2 tabla): ${descripcion.trim()} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
+            logger.info(`✅ Producto encontrado (patrón 2 tabla): ${cleanProductName} - Cant: ${qty}, Precio: ${unitPrice}, Total: ${totalPrice}`)
             continue
           } else {
             logger.warn(`❌ Producto rechazado (patrón 2 tabla): ${descripcion.trim()} - Precio: ${unitPrice}, Total: ${totalPrice}, isValidPrice: ${isValidPrice}`)
@@ -2017,8 +2098,10 @@ function parseInvoiceText(text) {
           const unitPrice = parseFloat(precioStr.replace(/\./g, '').replace(',', '.')) || 0
           
           if (unitPrice > 100 && unitPrice < 10000000 && descripcion.trim().length > 5) {
+            // Mantener el nombre completo del producto (incluye marca del vehículo si está presente)
+            const cleanProductName = descripcion.trim()
             result.items.push({
-              item_name: descripcion.trim(),
+              item_name: cleanProductName,
               quantity: 1,
               unit_price: unitPrice,
               total_price: unitPrice,
@@ -2199,7 +2282,20 @@ function parseInvoiceText(text) {
               // Remover palabras como "DESCRIPCION" si aparecen al inicio
               cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
               
-              // El nombre del producto es SOLO la descripción limpia (sin código ni marca)
+              // Remover marca del REPUESTO si está al inicio (ya la tenemos separada)
+              // NO remover marcas de vehículos, esas son parte del nombre del producto
+              if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
+                const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                       'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                       'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+                const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
+                
+                if (!isVehicleBrand) {
+                  cleanDescription = cleanDescription.substring(marca.length).trim()
+                }
+              }
+              
+              // El nombre del producto es la descripción completa (incluye marca del vehículo si está presente)
               const productName = cleanDescription
               
               const productNameLower = productName.toLowerCase()
