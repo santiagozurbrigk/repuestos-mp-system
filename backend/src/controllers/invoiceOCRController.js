@@ -1061,15 +1061,23 @@ function parseInvoiceText(text) {
       let i = tableStartIndex
       
       // Buscar el final de la sección de productos (antes de subtotales/totales)
+      // MEJORADO: Buscar más cuidadosamente para no cortar productos válidos
       let productSectionEnd = lines.length
       for (let j = tableStartIndex; j < lines.length; j++) {
         const lineLower = lines[j].toLowerCase()
+        // Solo detener si encontramos claramente un subtotal o total final
+        // NO detener solo por "total" ya que puede ser parte de un producto
         if (lineLower.includes('subtotal') || 
-            (lineLower.includes('total') && !lineLower.includes('importe') && !lineLower.includes('precio')) ||
-            lineLower.includes('iva') ||
+            (lineLower.includes('total') && 
+             !lineLower.includes('importe') && 
+             !lineLower.includes('precio') &&
+             !lineLower.includes('articulo') &&
+             (lineLower.includes('iva') || lineLower.includes('pibbb') || lineLower.includes('ingresos brutos'))) ||
+            (lineLower.includes('iva') && lineLower.includes('%')) ||
             lineLower.includes('importe en letras') ||
             lineLower.includes('observaciones')) {
           productSectionEnd = j
+          logger.info(`Final de sección de productos detectado en línea ${j}: ${lines[j]}`)
           break
         }
       }
@@ -1103,17 +1111,55 @@ function parseInvoiceText(text) {
         }
         
         // Buscar líneas con números grandes (precios totales o unitarios)
+        // MEJORADO: También buscar productos aunque no tengan precio directamente en esta línea
+        // El OCR puede separar las columnas, así que necesitamos procesar todas las líneas potenciales
         const largeNumberMatch = line.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
+        let shouldProcessProduct = false
+        let priceValue = 0
+        
         if (largeNumberMatch) {
-          const priceValue = parseArgentineNumber(largeNumberMatch[1])
+          priceValue = parseArgentineNumber(largeNumberMatch[1])
           
           // Filtrar precios razonables de productos (entre 100 y 200000)
           // Ajustado para capturar productos más baratos y evitar totales de factura
           // Los productos individuales generalmente están entre 100 y 200000
           if (priceValue >= 100 && priceValue < 200000) {
-            logger.info(`Línea ${i} contiene precio posible de producto: ${largeNumberMatch[1]} -> ${priceValue}`)
+            shouldProcessProduct = true
+          }
+        }
+        
+        // También procesar líneas que parecen ser parte de productos (texto descriptivo)
+        // incluso si no tienen precio directamente en esta línea
+        if (!shouldProcessProduct && line.length > 10 && line.length < 120 && 
+            /[A-ZÁÉÍÓÚÑ]/.test(line) && 
+            !line.match(/^\d+$/) &&
+            !line.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
+            !lineLower.includes('subtotal') &&
+            !lineLower.includes('iva') &&
+            !lineLower.includes('total') &&
+            !lineLower.includes('fecha') &&
+            !lineLower.includes('cliente') &&
+            !lineLower.includes('vendedor')) {
+          // Buscar si hay precios en las líneas siguientes (hasta 5 líneas adelante)
+          for (let k = i + 1; k < Math.min(i + 6, productSectionEnd); k++) {
+            const nextLine = lines[k]
+            const nextNumberMatch = nextLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
+            if (nextNumberMatch) {
+              const nextPrice = parseArgentineNumber(nextNumberMatch[1])
+              if (nextPrice >= 100 && nextPrice < 200000) {
+                shouldProcessProduct = true
+                priceValue = nextPrice
+                break
+              }
+            }
+          }
+        }
+        
+        if (shouldProcessProduct) {
+            logger.info(`Línea ${i} contiene precio posible de producto: ${priceValue}`)
             
-            // Buscar hacia atrás (hasta 8 líneas) para encontrar todos los componentes del producto
+            // Buscar hacia atrás (hasta 10 líneas) para encontrar todos los componentes del producto
+            // Aumentado de 8 a 10 para capturar productos con más líneas separadas
             let cantidad = 1
             let codigo = null
             let marca = null
@@ -1122,7 +1168,7 @@ function parseInvoiceText(text) {
             let totalPrice = priceValue
             
             // Buscar cantidad (número pequeño 1-2 dígitos)
-            for (let j = Math.max(i - 8, tableStartIndex); j < i; j++) {
+            for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
               const qtyLine = lines[j].trim()
               if (/^\d{1,2}$/.test(qtyLine)) {
                 const qty = parseInt(qtyLine)
@@ -1137,7 +1183,7 @@ function parseInvoiceText(text) {
             // Buscar precio unitario (número grande cerca del total, generalmente antes)
             // Buscar en un rango más amplio para encontrar el precio unitario
             // IMPORTANTE: El precio unitario debe estar ANTES del precio total y ser similar o igual
-            for (let j = Math.max(i - 8, tableStartIndex); j < i; j++) {
+            for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
               const prevLine = lines[j].trim()
               const prevLineLower = prevLine.toLowerCase().trim()
               
@@ -1468,9 +1514,8 @@ function parseInvoiceText(text) {
                 processedProducts.add(productKey)
                 logger.info(`✅ Producto encontrado: "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}, Marca: ${marca || 'N/A'}`)
                 
-                // Avanzar líneas para evitar procesar el mismo producto múltiples veces
-                i += 3
-                continue
+                // NO avanzar múltiples líneas - continuar procesando línea por línea para no perder productos
+                // El processedProducts Set evitará duplicados
               }
             } else {
               logger.warn(`❌ Producto incompleto - Desc: ${descripcion || 'N/A'}, PrecioUnit: ${precioUnitario || 'N/A'}, Total: ${totalPrice}`)
@@ -2300,8 +2345,7 @@ function parseInvoiceText(text) {
                 processedProducts.add(productKey)
                 logger.info(`✅ Producto encontrado (agrupación): "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}, Marca: ${marca || 'N/A'}`)
                 
-                i += 3
-                continue
+                // NO avanzar múltiples líneas - continuar procesando línea por línea para no perder productos
               }
             }
           }
