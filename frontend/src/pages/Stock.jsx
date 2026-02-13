@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../services/api'
 import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../hooks/useConfirm'
@@ -38,6 +38,8 @@ export default function Stock() {
   const [barcodeInputManual, setBarcodeInputManual] = useState('')
   const [barcodeTimeoutManual, setBarcodeTimeoutManual] = useState(null)
   const [searchingBarcodeManual, setSearchingBarcodeManual] = useState(false)
+  const [highlightedProductId, setHighlightedProductId] = useState(null)
+  const productRowRefs = useRef({})
 
   useEffect(() => {
     fetchPendingStock()
@@ -191,6 +193,83 @@ export default function Stock() {
     }
   }, [success, error])
 
+  // Función para buscar y resaltar producto por código de barras en la tabla
+  const handleBarcodeSearchInTable = useCallback(async (barcode) => {
+    if (!barcode || activeTab !== 'stock' || showManualProductModal) return
+
+    try {
+      // Buscar el producto en la lista actual de stockItems
+      let product = stockItems.find(item => item.barcode === barcode)
+      
+      if (product) {
+        // Resaltar el producto
+        setHighlightedProductId(product.id)
+        
+        // Hacer scroll hasta la fila del producto
+        setTimeout(() => {
+          const rowElement = productRowRefs.current[product.id]
+          if (rowElement) {
+            rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+        }, 100)
+        
+        // Quitar el resaltado después de 3 segundos
+        setTimeout(() => {
+          setHighlightedProductId(null)
+        }, 3000)
+        
+        success(`Producto encontrado: ${product.item_name}`)
+      } else {
+        // Si no está en la lista actual, buscar en el servidor
+        try {
+          const response = await api.get(`/stock/barcode/${barcode}`)
+          const foundProduct = response.data
+          
+          // Si el producto existe pero no está en la lista actual, limpiar búsqueda y recargar
+          if (foundProduct) {
+            setSearchTerm('')
+            await fetchStock()
+            
+            // Esperar un momento para que se cargue la lista y luego buscar de nuevo
+            setTimeout(async () => {
+              const response = await api.get('/stock')
+              const updatedItems = response.data || []
+              const updatedProduct = updatedItems.find(item => item.barcode === barcode)
+              
+              if (updatedProduct) {
+                setStockItems(updatedItems)
+                setHighlightedProductId(updatedProduct.id)
+                
+                setTimeout(() => {
+                  const rowElement = productRowRefs.current[updatedProduct.id]
+                  if (rowElement) {
+                    rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }
+                }, 100)
+                
+                setTimeout(() => {
+                  setHighlightedProductId(null)
+                }, 3000)
+                
+                success(`Producto encontrado: ${updatedProduct.item_name}`)
+              } else {
+                error('Producto no encontrado en el stock')
+              }
+            }, 500)
+          }
+        } catch (err) {
+          if (err.response?.status === 404) {
+            error('Producto no encontrado en el stock')
+          } else {
+            error('Error al buscar el producto')
+          }
+        }
+      }
+    } catch (err) {
+      error('Error al buscar el producto')
+    }
+  }, [activeTab, showManualProductModal, stockItems, success, error, fetchStock])
+
   // Capturar código de barras cuando el modal está abierto
   useEffect(() => {
     if (!showManualProductModal) return
@@ -245,6 +324,62 @@ export default function Stock() {
       }
     }
   }, [showManualProductModal, handleBarcodeScanManual])
+
+  // Capturar código de barras cuando estamos en la pestaña Stock y el modal NO está abierto
+  useEffect(() => {
+    if (activeTab !== 'stock' || showManualProductModal) return
+
+    let currentBarcode = ''
+    let timeout = null
+
+    const handleKeyPress = (e) => {
+      // Si estamos escribiendo en un input visible (como el buscador), no capturar
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && e.target.type !== 'hidden') {
+        // Si es el input de búsqueda y tiene foco, permitir escribir normalmente
+        return
+      }
+
+      // Los scanners de código de barras envían caracteres rápidamente seguidos de Enter
+      if (e.key === 'Enter' && currentBarcode.trim().length > 0) {
+        e.preventDefault()
+        handleBarcodeSearchInTable(currentBarcode.trim())
+        currentBarcode = ''
+        if (timeout) {
+          clearTimeout(timeout)
+          timeout = null
+        }
+        return
+      }
+
+      // Acumular caracteres del código de barras
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        currentBarcode += e.key
+        
+        // Limpiar timeout anterior
+        if (timeout) {
+          clearTimeout(timeout)
+        }
+
+        // Si no hay más caracteres en 100ms, procesar el código
+        timeout = setTimeout(() => {
+          if (currentBarcode.trim().length > 0) {
+            handleBarcodeSearchInTable(currentBarcode.trim())
+            currentBarcode = ''
+          }
+          timeout = null
+        }, 100)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyPress)
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress)
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+    }
+  }, [activeTab, showManualProductModal, handleBarcodeSearchInTable])
 
   const handleAddManualProduct = async () => {
     if (!manualProduct.barcode) {
@@ -530,7 +665,19 @@ export default function Stock() {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {stockItems.map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50">
+                      <tr 
+                        key={item.id} 
+                        ref={(el) => {
+                          if (el) {
+                            productRowRefs.current[item.id] = el
+                          }
+                        }}
+                        className={`hover:bg-gray-50 transition-all duration-300 ${
+                          highlightedProductId === item.id 
+                            ? 'bg-yellow-100 ring-2 ring-yellow-400 ring-offset-2 shadow-lg' 
+                            : ''
+                        }`}
+                      >
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{item.item_name}</div>
                         </td>
