@@ -3,6 +3,7 @@ import api from '../services/api'
 import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../hooks/useConfirm'
 import BarcodeLabel from '../components/BarcodeLabel'
+import BarcodeLabelSheet from '../components/BarcodeLabelSheet'
 import {
   Package,
   PackageCheck,
@@ -13,6 +14,8 @@ import {
   Plus,
   Minus,
   Printer,
+  CheckSquare,
+  Square,
 } from 'lucide-react'
 
 export default function Stock() {
@@ -26,6 +29,8 @@ export default function Stock() {
   const [generatingBarcode, setGeneratingBarcode] = useState(null)
   const [confirmingItem, setConfirmingItem] = useState(null)
   const [printingItem, setPrintingItem] = useState(null)
+  const [printingItems, setPrintingItems] = useState(null)
+  const [selectedItems, setSelectedItems] = useState([])
   const [showManualProductModal, setShowManualProductModal] = useState(false)
   const [manualProduct, setManualProduct] = useState({
     item_name: '',
@@ -146,11 +151,53 @@ export default function Stock() {
     try {
       await api.delete(`/stock/${itemId}`)
       await fetchStock()
+      setSelectedItems(prev => prev.filter(id => id !== itemId))
       success('Producto eliminado del stock')
     } catch (err) {
       console.error('Error al eliminar item de stock:', err)
       error('Error al eliminar el producto')
     }
+  }
+
+  const handleSelectItem = (itemId) => {
+    setSelectedItems(prev => {
+      if (prev.includes(itemId)) {
+        return prev.filter(id => id !== itemId)
+      } else {
+        return [...prev, itemId]
+      }
+    })
+  }
+
+  const handleSelectAll = () => {
+    if (selectedItems.length === stockItems.length) {
+      setSelectedItems([])
+    } else {
+      setSelectedItems(stockItems.map(item => item.id))
+    }
+  }
+
+  const handlePrintSelected = () => {
+    if (selectedItems.length === 0) {
+      error('No hay productos seleccionados')
+      return
+    }
+    
+    const itemsToPrint = stockItems.filter(item => 
+      selectedItems.includes(item.id) && item.barcode
+    )
+    
+    if (itemsToPrint.length === 0) {
+      error('Los productos seleccionados no tienen código de barras')
+      return
+    }
+    
+    if (itemsToPrint.length < selectedItems.length) {
+      const withoutBarcode = selectedItems.length - itemsToPrint.length
+      error(`${withoutBarcode} producto(s) seleccionado(s) no tienen código de barras y fueron omitidos`)
+    }
+    
+    setPrintingItems(itemsToPrint)
   }
 
   const handleBarcodeScanManual = useCallback(async (barcode) => {
@@ -620,15 +667,43 @@ export default function Stock() {
                     Productos confirmados con código de barras
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowManualProductModal(true)}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Agregar Producto
-                </button>
+                <div className="flex items-center space-x-3">
+                  {selectedItems.length > 0 && (
+                    <button
+                      onClick={handlePrintSelected}
+                      className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                    >
+                      <Printer className="w-4 h-4 mr-2" />
+                      Imprimir {selectedItems.length} Seleccionado(s)
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowManualProductModal(true)}
+                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Agregar Producto
+                  </button>
+                </div>
               </div>
             </div>
+            
+            {/* Barra de selección múltiple */}
+            {selectedItems.length > 0 && (
+              <div className="px-6 py-3 bg-primary-50 border-b border-primary-200 flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm font-medium text-primary-900">
+                    {selectedItems.length} producto(s) seleccionado(s)
+                  </span>
+                  <button
+                    onClick={() => setSelectedItems([])}
+                    className="text-sm text-gray-600 hover:text-gray-900"
+                  >
+                    Deseleccionar todo
+                  </button>
+                </div>
+              </div>
+            )}
 
             {stockItems.length === 0 ? (
               <div className="p-12 text-center">
@@ -643,6 +718,19 @@ export default function Stock() {
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider w-12">
+                        <button
+                          onClick={handleSelectAll}
+                          className="flex items-center"
+                          title="Seleccionar todas"
+                        >
+                          {selectedItems.length === stockItems.length && stockItems.length > 0 ? (
+                            <CheckSquare className="w-5 h-5 text-primary-600" />
+                          ) : (
+                            <Square className="w-5 h-5 text-gray-400" />
+                          )}
+                        </button>
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                         Producto
                       </th>
@@ -664,21 +752,35 @@ export default function Stock() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {stockItems.map((item) => (
-                      <tr 
-                        key={item.id} 
-                        ref={(el) => {
-                          if (el) {
-                            productRowRefs.current[item.id] = el
-                          }
-                        }}
-                        className={`hover:bg-gray-50 transition-all duration-300 ${
-                          highlightedProductId === item.id 
-                            ? 'bg-yellow-100 ring-2 ring-yellow-400 ring-offset-2 shadow-lg' 
-                            : ''
-                        }`}
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap">
+                    {stockItems.map((item) => {
+                      const isSelected = selectedItems.includes(item.id)
+                      return (
+                        <tr 
+                          key={item.id} 
+                          ref={(el) => {
+                            if (el) {
+                              productRowRefs.current[item.id] = el
+                            }
+                          }}
+                          className={`hover:bg-gray-50 transition-all duration-300 ${
+                            highlightedProductId === item.id 
+                              ? 'bg-yellow-100 ring-2 ring-yellow-400 ring-offset-2 shadow-lg' 
+                              : ''
+                          } ${isSelected ? 'bg-primary-50' : ''}`}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <button
+                              onClick={() => handleSelectItem(item.id)}
+                              className="flex items-center"
+                            >
+                              {isSelected ? (
+                                <CheckSquare className="w-5 h-5 text-primary-600" />
+                              ) : (
+                                <Square className="w-5 h-5 text-gray-400 hover:text-gray-600" />
+                              )}
+                            </button>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">{item.item_name}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -741,11 +843,19 @@ export default function Stock() {
 
       <ConfirmDialog />
       
-      {/* Modal de impresión de etiqueta */}
+      {/* Modal de impresión de etiqueta individual */}
       {printingItem && (
         <BarcodeLabel
           item={printingItem}
           onClose={() => setPrintingItem(null)}
+        />
+      )}
+
+      {/* Modal de impresión de múltiples etiquetas */}
+      {printingItems && (
+        <BarcodeLabelSheet
+          items={printingItems}
+          onClose={() => setPrintingItems(null)}
         />
       )}
 
