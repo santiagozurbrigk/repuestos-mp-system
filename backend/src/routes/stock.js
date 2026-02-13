@@ -7,6 +7,7 @@ import {
   getStock,
   getStockByBarcode,
   generateBarcodeNumber,
+  createStockItem,
   updateStockQuantity,
   deleteStockItem,
 } from '../controllers/stockController.js'
@@ -21,6 +22,7 @@ router.delete('/pending/:id', deletePendingItem)
 
 // Rutas de stock
 router.get('/', getStock)
+router.post('/', createStockItem)
 router.get('/barcode/:barcode', getStockByBarcode)
 router.get('/generate-barcode', generateBarcodeNumber)
 router.put('/:id/quantity', updateStockQuantity)

@@ -288,6 +288,71 @@ export const getStockByBarcode = async (req, res) => {
   }
 }
 
+export const createStockItem = async (req, res) => {
+  try {
+    const { item_name, code, brand, barcode, quantity } = req.body
+    const userId = req.user.id
+
+    if (!item_name || !barcode) {
+      return res.status(400).json({ error: 'Nombre del producto y código de barras son requeridos' })
+    }
+
+    // Verificar si ya existe un producto con ese código de barras
+    const { data: existingProduct } = await supabase
+      .from('stock')
+      .select('*')
+      .eq('barcode', barcode)
+      .maybeSingle()
+
+    if (existingProduct) {
+      // Si existe, actualizar la cantidad
+      const newQuantity = (existingProduct.quantity || 0) + (parseInt(quantity) || 1)
+      const { data: updatedStock, error: updateError } = await supabase
+        .from('stock')
+        .update({ 
+          quantity: newQuantity,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingProduct.id)
+        .select()
+        .single()
+
+      if (updateError) {
+        logger.error('Error al actualizar stock existente:', updateError)
+        return res.status(500).json({ error: 'Error al actualizar el stock' })
+      }
+
+      logger.info(`Cantidad actualizada: ${existingProduct.quantity} + ${quantity} = ${updatedStock.quantity}`)
+      return res.json(updatedStock)
+    }
+
+    // Crear nuevo producto en stock
+    const { data: newStock, error: createError } = await supabase
+      .from('stock')
+      .insert([{
+        user_id: userId,
+        item_name,
+        code: code || null,
+        brand: brand || null,
+        barcode,
+        quantity: parseInt(quantity) || 1,
+      }])
+      .select()
+      .single()
+
+    if (createError) {
+      logger.error('Error al crear producto en stock:', createError)
+      return res.status(500).json({ error: 'Error al crear el producto en stock' })
+    }
+
+    logger.info(`Nuevo producto creado en stock: ${newStock.item_name}`)
+    res.status(201).json(newStock)
+  } catch (error) {
+    logger.error('Error inesperado en createStockItem:', error)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+}
+
 export const generateBarcodeNumber = async (req, res) => {
   try {
     // Generar código de barras único (usando timestamp + random)
