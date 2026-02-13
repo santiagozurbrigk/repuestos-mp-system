@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import api from '../services/api'
 import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../hooks/useConfirm'
@@ -34,7 +34,9 @@ export default function Stock() {
     code: '',
     quantity: 1,
   })
-  const [generatingBarcodeManual, setGeneratingBarcodeManual] = useState(false)
+  const [foundProduct, setFoundProduct] = useState(null)
+  const [barcodeInputManual, setBarcodeInputManual] = useState('')
+  const [barcodeTimeoutManual, setBarcodeTimeoutManual] = useState(null)
   const [searchingBarcodeManual, setSearchingBarcodeManual] = useState(false)
 
   useEffect(() => {
@@ -149,57 +151,110 @@ export default function Stock() {
     }
   }
 
-  const handleGenerateBarcodeManual = async () => {
-    try {
-      setGeneratingBarcodeManual(true)
-      const response = await api.get('/stock/generate-barcode')
-      setManualProduct({ ...manualProduct, barcode: response.data.barcode })
-      success('Código de barras generado correctamente')
-    } catch (err) {
-      error('Error al generar el código de barras')
-    } finally {
-      setGeneratingBarcodeManual(false)
-    }
-  }
-
-  const handleSearchExistingBarcodeManual = async () => {
-    if (!manualProduct.barcode) {
-      error('Ingresa un código de barras para buscar')
-      return
-    }
+  const handleBarcodeScanManual = useCallback(async (barcode) => {
+    if (!barcode) return
 
     try {
       setSearchingBarcodeManual(true)
-      const response = await api.get(`/stock/barcode/${manualProduct.barcode}`)
+      setBarcodeInputManual(barcode)
+      
+      const response = await api.get(`/stock/barcode/${barcode}`)
       const product = response.data
       
+      // Producto encontrado - modo edición (sumar cantidad)
+      setFoundProduct(product)
       setManualProduct({
-        ...manualProduct,
         item_name: product.item_name,
+        barcode: product.barcode,
         brand: product.brand || '',
         code: product.code || '',
+        quantity: 1,
       })
-      success('Producto encontrado. Si ya existe, se sumará la cantidad.')
+      success('Producto encontrado. Se sumará la cantidad al stock existente.')
     } catch (err) {
       if (err.response?.status === 404) {
-        // No existe, está bien, continuar con el formulario
-        success('Código disponible. Puedes crear el producto.')
+        // Producto no encontrado - modo creación (nuevo producto)
+        setFoundProduct(null)
+        setManualProduct({
+          item_name: '',
+          barcode: barcode,
+          brand: '',
+          code: '',
+          quantity: 1,
+        })
+        success('Producto no encontrado. Completa los datos para crear uno nuevo.')
       } else {
         error('Error al buscar el producto')
       }
     } finally {
       setSearchingBarcodeManual(false)
     }
-  }
+  }, [success, error])
+
+  // Capturar código de barras cuando el modal está abierto
+  useEffect(() => {
+    if (!showManualProductModal) return
+
+    let currentBarcode = ''
+    let timeout = null
+
+    const handleKeyPress = (e) => {
+      // Si estamos escribiendo en un input visible, no capturar
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && e.target.type !== 'hidden') {
+        return
+      }
+
+      // Los scanners de código de barras envían caracteres rápidamente seguidos de Enter
+      if (e.key === 'Enter' && currentBarcode.trim().length > 0) {
+        e.preventDefault()
+        handleBarcodeScanManual(currentBarcode.trim())
+        currentBarcode = ''
+        if (timeout) {
+          clearTimeout(timeout)
+          timeout = null
+        }
+        return
+      }
+
+      // Acumular caracteres del código de barras
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        currentBarcode += e.key
+        
+        // Limpiar timeout anterior
+        if (timeout) {
+          clearTimeout(timeout)
+        }
+
+        // Si no hay más caracteres en 100ms, procesar el código
+        timeout = setTimeout(() => {
+          if (currentBarcode.trim().length > 0) {
+            handleBarcodeScanManual(currentBarcode.trim())
+            currentBarcode = ''
+          }
+          timeout = null
+        }, 100)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyPress)
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress)
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+    }
+  }, [showManualProductModal, handleBarcodeScanManual])
 
   const handleAddManualProduct = async () => {
-    if (!manualProduct.item_name) {
-      error('El nombre del producto es requerido')
+    if (!manualProduct.barcode) {
+      error('Código de barras requerido')
       return
     }
 
-    if (!manualProduct.barcode) {
-      error('Debes generar o buscar un código de barras')
+    // Si no existe el producto, requiere nombre
+    if (!foundProduct && !manualProduct.item_name) {
+      error('El nombre del producto es requerido para crear uno nuevo')
       return
     }
 
@@ -220,8 +275,10 @@ export default function Stock() {
         code: '',
         quantity: 1,
       })
+      setFoundProduct(null)
+      setBarcodeInputManual('')
       await fetchStock()
-      success('Producto agregado al stock correctamente')
+      success(foundProduct ? 'Cantidad agregada al stock correctamente' : 'Producto creado y agregado al stock correctamente')
     } catch (err) {
       error(err.response?.data?.error || 'Error al agregar el producto')
     }
@@ -555,107 +612,184 @@ export default function Stock() {
                 <h3 className="text-2xl font-bold text-gray-900 mb-6">
                   Agregar Producto al Stock
                 </h3>
+                
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-700">
+                    📷 Escanea el código de barras del producto para agregarlo automáticamente
+                  </p>
+                </div>
+
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Nombre del Producto *
+                      Código de Barras *
                     </label>
                     <input
                       type="text"
                       required
                       autoFocus
                       className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      value={manualProduct.item_name}
-                      onChange={(e) => setManualProduct({ ...manualProduct, item_name: e.target.value })}
-                      placeholder="Ej: Filtro de aceite"
+                      value={barcodeInputManual}
+                      onChange={(e) => {
+                        setBarcodeInputManual(e.target.value)
+                        if (e.target.value.trim().length > 0) {
+                          // Si se escribe manualmente, buscar después de un delay
+                          if (barcodeTimeoutManual) {
+                            clearTimeout(barcodeTimeoutManual)
+                          }
+                          const timeout = setTimeout(() => {
+                            if (e.target.value.trim().length > 0) {
+                              handleBarcodeScanManual(e.target.value.trim())
+                            }
+                          }, 500)
+                          setBarcodeTimeoutManual(timeout)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && barcodeInputManual.trim().length > 0) {
+                          e.preventDefault()
+                          handleBarcodeScanManual(barcodeInputManual.trim())
+                        }
+                      }}
+                      placeholder="Escanea o ingresa código de barras"
+                      disabled={searchingBarcodeManual}
                     />
+                    {searchingBarcodeManual && (
+                      <p className="mt-1 text-xs text-gray-500">Buscando producto...</p>
+                    )}
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Código de Barras *
-                    </label>
-                    <div className="flex space-x-2">
-                      <input
-                        type="text"
-                        required
-                        className="flex-1 border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={manualProduct.barcode}
-                        onChange={(e) => setManualProduct({ ...manualProduct, barcode: e.target.value })}
-                        placeholder="Código de barras"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleGenerateBarcodeManual}
-                        disabled={generatingBarcodeManual}
-                        className="px-4 py-3 bg-primary-600 text-white rounded-xl hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                      >
-                        {generatingBarcodeManual ? '...' : 'Generar'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSearchExistingBarcodeManual}
-                        disabled={searchingBarcodeManual || !manualProduct.barcode}
-                        className="px-4 py-3 bg-gray-600 text-white rounded-xl hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-                      >
-                        {searchingBarcodeManual ? '...' : 'Buscar'}
-                      </button>
-                    </div>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Genera un código nuevo o busca uno existente. Si existe, se sumará la cantidad.
-                    </p>
-                  </div>
+                  {foundProduct ? (
+                    <>
+                      <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-sm font-medium text-green-700 mb-3">Producto encontrado:</p>
+                        <div className="space-y-2">
+                          <div>
+                            <span className="text-xs font-semibold text-gray-600">Nombre:</span>
+                            <p className="text-sm text-gray-900">{manualProduct.item_name}</p>
+                          </div>
+                          {manualProduct.brand && (
+                            <div>
+                              <span className="text-xs font-semibold text-gray-600">Marca:</span>
+                              <p className="text-sm text-gray-900">{manualProduct.brand}</p>
+                            </div>
+                          )}
+                          {manualProduct.code && (
+                            <div>
+                              <span className="text-xs font-semibold text-gray-600">Código:</span>
+                              <p className="text-sm text-gray-900">{manualProduct.code}</p>
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-xs font-semibold text-gray-600">Código de Barras:</span>
+                            <p className="text-sm font-mono text-gray-900">{manualProduct.barcode}</p>
+                          </div>
+                          {foundProduct.quantity > 0 && (
+                            <div>
+                              <span className="text-xs font-semibold text-gray-600">Stock actual:</span>
+                              <p className="text-sm text-gray-900">{foundProduct.quantity} unidades</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Marca
-                      </label>
-                      <input
-                        type="text"
-                        className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={manualProduct.brand}
-                        onChange={(e) => setManualProduct({ ...manualProduct, brand: e.target.value })}
-                        placeholder="Ej: VW"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Código
-                      </label>
-                      <input
-                        type="text"
-                        className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                        value={manualProduct.code}
-                        onChange={(e) => setManualProduct({ ...manualProduct, code: e.target.value })}
-                        placeholder="Código interno"
-                      />
-                    </div>
-                  </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Cantidad a Agregar *
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          value={manualProduct.quantity}
+                          onChange={(e) => setManualProduct({ ...manualProduct, quantity: e.target.value })}
+                          placeholder="1"
+                        />
+                        <p className="mt-1 text-xs text-gray-500">
+                          Esta cantidad se sumará al stock existente del producto
+                        </p>
+                      </div>
+                    </>
+                  ) : manualProduct.barcode ? (
+                    <>
+                      <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <p className="text-sm font-medium text-yellow-700 mb-3">Producto no encontrado. Completa los datos para crear uno nuevo:</p>
+                      </div>
 
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Cantidad *
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      value={manualProduct.quantity}
-                      onChange={(e) => setManualProduct({ ...manualProduct, quantity: e.target.value })}
-                      placeholder="1"
-                    />
-                  </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Nombre del Producto *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          value={manualProduct.item_name}
+                          onChange={(e) => setManualProduct({ ...manualProduct, item_name: e.target.value })}
+                          placeholder="Ej: Filtro de aceite"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            Marca
+                          </label>
+                          <input
+                            type="text"
+                            className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                            value={manualProduct.brand}
+                            onChange={(e) => setManualProduct({ ...manualProduct, brand: e.target.value })}
+                            placeholder="Ej: VW"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            Código
+                          </label>
+                          <input
+                            type="text"
+                            className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                            value={manualProduct.code}
+                            onChange={(e) => setManualProduct({ ...manualProduct, code: e.target.value })}
+                            placeholder="Código interno"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Cantidad Inicial *
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          value={manualProduct.quantity}
+                          onChange={(e) => setManualProduct({ ...manualProduct, quantity: e.target.value })}
+                          placeholder="1"
+                        />
+                      </div>
+                    </>
+                  ) : !searchingBarcodeManual && (
+                    <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg text-center">
+                      <p className="text-sm text-gray-500">
+                        Escanea un código de barras para buscar el producto
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="bg-gray-50 px-6 py-4 sm:flex sm:flex-row-reverse border-t border-gray-100">
                 <button
                   type="button"
                   onClick={handleAddManualProduct}
-                  className="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-5 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-base font-medium text-white hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all duration-200 sm:ml-3 sm:w-auto"
+                  disabled={!manualProduct.barcode || searchingBarcodeManual || (!foundProduct && !manualProduct.item_name)}
+                  className="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-5 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-base font-medium text-white hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed sm:ml-3 sm:w-auto"
                 >
-                  Agregar
+                  {foundProduct ? 'Agregar Cantidad' : 'Crear Producto'}
                 </button>
                 <button
                   type="button"
@@ -668,6 +802,11 @@ export default function Stock() {
                       code: '',
                       quantity: 1,
                     })
+                    setFoundProduct(null)
+                    setBarcodeInputManual('')
+                    if (barcodeTimeoutManual) {
+                      clearTimeout(barcodeTimeoutManual)
+                    }
                   }}
                   className="mt-3 w-full inline-flex justify-center rounded-xl border border-gray-300 shadow-sm px-5 py-2.5 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all duration-200 sm:mt-0 sm:ml-3 sm:w-auto"
                 >
