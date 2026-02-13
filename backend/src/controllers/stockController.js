@@ -257,6 +257,37 @@ export const getStock = async (req, res) => {
   }
 }
 
+export const getStockByBarcode = async (req, res) => {
+  try {
+    const { barcode } = req.params
+
+    if (!barcode) {
+      return res.status(400).json({ error: 'Código de barras es requerido' })
+    }
+
+    const { data, error } = await supabase
+      .from('stock')
+      .select('*')
+      .eq('barcode', barcode)
+      .gt('quantity', 0) // Solo productos con stock disponible
+      .single()
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        logger.warn(`Producto no encontrado con código de barras: ${barcode}`)
+        return res.status(404).json({ error: 'Producto no encontrado o sin stock disponible' })
+      }
+      logger.error('Error al buscar producto por código de barras:', error)
+      return res.status(500).json({ error: 'Error al buscar el producto' })
+    }
+
+    res.json(data)
+  } catch (error) {
+    logger.error('Error inesperado en getStockByBarcode:', error)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+}
+
 export const updateStockQuantity = async (req, res) => {
   try {
     const { id } = req.params

@@ -30,6 +30,9 @@ export default function Sales() {
     observations: '',
     date: formatDateTimeLocal(),
   })
+  const [scannedProducts, setScannedProducts] = useState([])
+  const [barcodeInput, setBarcodeInput] = useState('')
+  const [barcodeTimeout, setBarcodeTimeout] = useState(null)
 
   const isExpense = (method) => {
     return method === 'expenses' || method === 'freight'
@@ -53,6 +56,8 @@ export default function Sales() {
           observations: '',
           date: formatDateTimeLocal(),
         })
+        setScannedProducts([])
+        setBarcodeInput('')
         setShowModal(true)
       }
     }
@@ -60,6 +65,149 @@ export default function Sales() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [showModal])
+
+  // Capturar código de barras cuando el modal está abierto
+  useEffect(() => {
+    if (!showModal || editingSale) return
+
+    let currentBarcode = ''
+    let timeout = null
+
+    const handleKeyPress = (e) => {
+      // Si estamos escribiendo en un input visible, no capturar
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && e.target.type !== 'hidden') {
+        return
+      }
+
+      // Los scanners de código de barras envían caracteres rápidamente seguidos de Enter
+      if (e.key === 'Enter' && currentBarcode.trim().length > 0) {
+        e.preventDefault()
+        handleBarcodeScan(currentBarcode.trim())
+        currentBarcode = ''
+        if (timeout) {
+          clearTimeout(timeout)
+          timeout = null
+        }
+        return
+      }
+
+      // Acumular caracteres del código de barras
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        currentBarcode += e.key
+        
+        // Limpiar timeout anterior
+        if (timeout) {
+          clearTimeout(timeout)
+        }
+
+        // Si no hay más caracteres en 100ms, procesar el código
+        timeout = setTimeout(() => {
+          if (currentBarcode.trim().length > 0) {
+            handleBarcodeScan(currentBarcode.trim())
+            currentBarcode = ''
+          }
+          timeout = null
+        }, 100)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyPress)
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress)
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+    }
+  }, [showModal, editingSale])
+
+  const handleBarcodeScan = async (barcode) => {
+    try {
+      const response = await api.get(`/stock/barcode/${barcode}`)
+      const product = response.data
+
+      // Verificar si el producto ya está en la lista
+      const existingIndex = scannedProducts.findIndex(p => p.stock_id === product.id)
+      
+      if (existingIndex >= 0) {
+        // Si ya existe, incrementar cantidad vendida
+        const updated = [...scannedProducts]
+        const currentStock = updated[existingIndex].available_stock
+        const newSoldQuantity = updated[existingIndex].sold_quantity + 1
+        
+        if (newSoldQuantity > currentStock) {
+          error(`No hay suficiente stock. Disponible: ${currentStock}`)
+          return
+        }
+        
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          sold_quantity: newSoldQuantity,
+        }
+        setScannedProducts(updated)
+      } else {
+        // Si no existe, agregarlo con cantidad 1 y precio unitario (se puede editar)
+        setScannedProducts([...scannedProducts, {
+          stock_id: product.id,
+          item_name: product.item_name,
+          brand: product.brand,
+          code: product.code,
+          barcode: product.barcode,
+          available_stock: product.quantity, // Stock disponible
+          sold_quantity: 1, // Cantidad a vender
+          unit_price: 0, // El usuario debe ingresar el precio
+        }])
+      }
+
+      // Actualizar el total
+      updateTotalFromProducts()
+    } catch (err) {
+      if (err.response?.status === 404) {
+        error('Producto no encontrado o sin stock disponible')
+      } else {
+        error('Error al buscar el producto')
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (scannedProducts.length > 0) {
+      const total = scannedProducts.reduce((sum, product) => {
+        return sum + (parseFloat(product.unit_price || 0) * product.sold_quantity)
+      }, 0)
+      setFormData(prev => ({ ...prev, total_amount: total.toFixed(2) }))
+    } else if (!editingSale) {
+      // Si no hay productos y no estamos editando, limpiar el total
+      setFormData(prev => ({ ...prev, total_amount: '' }))
+    }
+  }, [scannedProducts, editingSale])
+
+  const handleProductQuantityChange = (index, newQuantity) => {
+    const quantity = parseInt(newQuantity)
+    if (quantity < 1) return
+    
+    const updated = [...scannedProducts]
+    const product = updated[index]
+    
+    if (quantity > product.available_stock) {
+      error(`No hay suficiente stock. Disponible: ${product.available_stock}`)
+      return
+    }
+    
+    updated[index] = { ...updated[index], sold_quantity: quantity }
+    setScannedProducts(updated)
+  }
+
+  const handleProductPriceChange = (index, newPrice) => {
+    const updated = [...scannedProducts]
+    updated[index] = { ...updated[index], unit_price: parseFloat(newPrice || 0) }
+    setScannedProducts(updated)
+  }
+
+  const handleRemoveProduct = (index) => {
+    const updated = scannedProducts.filter((_, i) => i !== index)
+    setScannedProducts(updated)
+  }
 
   const fetchClosedDates = async () => {
     try {
@@ -94,7 +242,16 @@ export default function Sales() {
       if (editingSale) {
         await api.put(`/sales/${editingSale.id}`, formData)
       } else {
-        await api.post('/sales', formData)
+        // Si hay productos escaneados, enviarlos junto con la venta
+      const saleData = {
+        ...formData,
+        products: scannedProducts.length > 0 ? scannedProducts.map(p => ({
+          stock_id: p.stock_id,
+          quantity: p.sold_quantity,
+          unit_price: p.unit_price || 0,
+        })) : undefined,
+      }
+      await api.post('/sales', saleData)
       }
       setShowModal(false)
       setEditingSale(null)
@@ -104,6 +261,8 @@ export default function Sales() {
         observations: '',
         date: formatDateTimeLocal(),
       })
+      setScannedProducts([])
+      setBarcodeInput('')
       fetchSales()
       fetchClosedDates() // Actualizar fechas cerradas después de guardar
       success(editingSale ? 'Venta actualizada correctamente' : 'Venta creada correctamente')
@@ -196,6 +355,8 @@ export default function Sales() {
               observations: '',
               date: formatDateTimeLocal(),
             })
+            setScannedProducts([])
+            setBarcodeInput('')
             setShowModal(true)
           }}
           className="inline-flex items-center px-5 py-2.5 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all duration-200"
@@ -299,6 +460,64 @@ export default function Sales() {
                   <h3 className="text-2xl font-bold text-gray-900 mb-6">
                     {editingSale ? 'Editar Venta' : 'Nueva Venta'}
                   </h3>
+                  {!editingSale && (
+                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-700">
+                        📷 Escanea códigos de barras para agregar productos automáticamente
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Lista de productos escaneados */}
+                  {!editingSale && scannedProducts.length > 0 && (
+                    <div className="mb-5">
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Productos Escaneados
+                      </label>
+                      <div className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                        {scannedProducts.map((product, index) => (
+                          <div key={index} className="flex items-center space-x-2 bg-gray-50 p-2 rounded-lg">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-gray-900 truncate">
+                                {product.item_name}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {product.brand && `Marca: ${product.brand} | `}
+                                Stock disponible: {product.available_stock}
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="Precio"
+                                value={product.unit_price || ''}
+                                onChange={(e) => handleProductPriceChange(index, e.target.value)}
+                                className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-primary-500"
+                              />
+                              <input
+                                type="number"
+                                min="1"
+                                max={product.available_stock}
+                                value={product.sold_quantity}
+                                onChange={(e) => handleProductQuantityChange(index, e.target.value)}
+                                className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-primary-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveProduct(index)}
+                                className="p-1 text-red-600 hover:text-red-700"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-5">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-2">
@@ -308,13 +527,14 @@ export default function Sales() {
                         type="number"
                         step="0.01"
                         required
-                        autoFocus
+                        autoFocus={scannedProducts.length === 0}
                         className="block w-full border border-gray-300 rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
                         value={formData.total_amount}
                         onChange={(e) =>
                           setFormData({ ...formData, total_amount: e.target.value })
                         }
                         placeholder="0.00"
+                        disabled={scannedProducts.length > 0}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault()
@@ -325,6 +545,11 @@ export default function Sales() {
                           }
                         }}
                       />
+                      {scannedProducts.length > 0 && (
+                        <p className="mt-1 text-xs text-gray-500">
+                          El total se calcula automáticamente desde los productos escaneados
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-2">

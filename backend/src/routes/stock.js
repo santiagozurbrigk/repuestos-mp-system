@@ -5,6 +5,7 @@ import {
   confirmPendingItem,
   deletePendingItem,
   getStock,
+  getStockByBarcode,
   updateStockQuantity,
   deleteStockItem,
 } from '../controllers/stockController.js'
@@ -19,6 +20,7 @@ router.delete('/pending/:id', deletePendingItem)
 
 // Rutas de stock
 router.get('/', getStock)
+router.get('/barcode/:barcode', getStockByBarcode)
 router.put('/:id/quantity', updateStockQuantity)
 router.delete('/:id', deleteStockItem)
 

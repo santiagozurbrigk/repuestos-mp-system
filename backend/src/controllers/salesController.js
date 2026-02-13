@@ -5,7 +5,7 @@ import { getBuenosAiresDateTime, getBuenosAiresDateString } from '../utils/dateH
 
 export const createSale = async (req, res) => {
   try {
-    const { total_amount, payment_method, observations, date } = req.body
+    const { total_amount, payment_method, observations, date, products } = req.body
     const userId = req.user.id
 
     if (!total_amount || !payment_method) {
@@ -59,6 +59,44 @@ export const createSale = async (req, res) => {
     if (error) {
       logger.error('Error al crear venta en Supabase:', error)
       return res.status(500).json({ error: 'Error al crear la venta' })
+    }
+
+    // Si hay productos, descontar del stock
+    if (products && Array.isArray(products) && products.length > 0) {
+      for (const product of products) {
+        const { stock_id, quantity } = product
+        
+        // Obtener el producto actual
+        const { data: stockItem, error: stockError } = await supabase
+          .from('stock')
+          .select('quantity')
+          .eq('id', stock_id)
+          .single()
+
+        if (stockError) {
+          logger.error(`Error al obtener producto de stock ${stock_id}:`, stockError)
+          continue
+        }
+
+        // Verificar que haya stock suficiente
+        if (stockItem.quantity < quantity) {
+          logger.warn(`Stock insuficiente para producto ${stock_id}. Disponible: ${stockItem.quantity}, Solicitado: ${quantity}`)
+          // Continuar pero registrar el warning
+        }
+
+        // Descontar del stock
+        const newQuantity = Math.max(0, stockItem.quantity - quantity)
+        const { error: updateError } = await supabase
+          .from('stock')
+          .update({ quantity: newQuantity })
+          .eq('id', stock_id)
+
+        if (updateError) {
+          logger.error(`Error al actualizar stock para producto ${stock_id}:`, updateError)
+        } else {
+          logger.info(`Stock actualizado para producto ${stock_id}: ${stockItem.quantity} - ${quantity} = ${newQuantity}`)
+        }
+      }
     }
 
     res.status(201).json(data)
