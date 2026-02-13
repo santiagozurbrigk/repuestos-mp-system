@@ -31,6 +31,7 @@ export default function Stock() {
   const [printingItem, setPrintingItem] = useState(null)
   const [printingItems, setPrintingItems] = useState(null)
   const [selectedItems, setSelectedItems] = useState([])
+  const [selectedPendingItems, setSelectedPendingItems] = useState([])
   const [showManualProductModal, setShowManualProductModal] = useState(false)
   const [manualProduct, setManualProduct] = useState({
     item_name: '',
@@ -194,6 +195,47 @@ export default function Stock() {
     
     if (itemsToPrint.length < selectedItems.length) {
       const withoutBarcode = selectedItems.length - itemsToPrint.length
+      error(`${withoutBarcode} producto(s) seleccionado(s) no tienen código de barras y fueron omitidos`)
+    }
+    
+    setPrintingItems(itemsToPrint)
+  }
+
+  const handleSelectPendingItem = (itemId) => {
+    setSelectedPendingItems(prev => {
+      if (prev.includes(itemId)) {
+        return prev.filter(id => id !== itemId)
+      } else {
+        return [...prev, itemId]
+      }
+    })
+  }
+
+  const handleSelectAllPending = () => {
+    if (selectedPendingItems.length === pendingItems.length) {
+      setSelectedPendingItems([])
+    } else {
+      setSelectedPendingItems(pendingItems.map(item => item.id))
+    }
+  }
+
+  const handlePrintSelectedPending = () => {
+    if (selectedPendingItems.length === 0) {
+      error('No hay productos seleccionados')
+      return
+    }
+    
+    const itemsToPrint = pendingItems.filter(item => 
+      selectedPendingItems.includes(item.id) && item.barcode
+    )
+    
+    if (itemsToPrint.length === 0) {
+      error('Los productos seleccionados no tienen código de barras')
+      return
+    }
+    
+    if (itemsToPrint.length < selectedPendingItems.length) {
+      const withoutBarcode = selectedPendingItems.length - itemsToPrint.length
       error(`${withoutBarcode} producto(s) seleccionado(s) no tienen código de barras y fueron omitidos`)
     }
     
@@ -510,11 +552,41 @@ export default function Stock() {
       {activeTab === 'pending' ? (
         <div className="bg-white shadow-soft rounded-xl border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
-            <h2 className="text-lg font-semibold text-gray-900">Productos Pendientes</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Productos escaneados de facturas que requieren código de barras
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Productos Pendientes</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Productos escaneados de facturas que requieren código de barras
+                </p>
+              </div>
+              {selectedPendingItems.length > 0 && (
+                <button
+                  onClick={handlePrintSelectedPending}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                >
+                  <Printer className="w-4 h-4 mr-2" />
+                  Imprimir {selectedPendingItems.length} Seleccionado(s)
+                </button>
+              )}
+            </div>
           </div>
+          
+          {/* Barra de selección múltiple para pendientes */}
+          {selectedPendingItems.length > 0 && (
+            <div className="px-6 py-3 bg-primary-50 border-b border-primary-200 flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <span className="text-sm font-medium text-primary-900">
+                  {selectedPendingItems.length} producto(s) seleccionado(s)
+                </span>
+                <button
+                  onClick={() => setSelectedPendingItems([])}
+                  className="text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Deseleccionar todo
+                </button>
+              </div>
+            </div>
+          )}
 
           {loading ? (
             <div className="p-12 text-center">
@@ -533,6 +605,19 @@ export default function Stock() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider w-12">
+                      <button
+                        onClick={handleSelectAllPending}
+                        className="flex items-center"
+                        title="Seleccionar todas"
+                      >
+                        {selectedPendingItems.length === pendingItems.length && pendingItems.length > 0 ? (
+                          <CheckSquare className="w-5 h-5 text-primary-600" />
+                        ) : (
+                          <Square className="w-5 h-5 text-gray-400" />
+                        )}
+                      </button>
+                    </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                       Producto
                     </th>
@@ -554,9 +639,26 @@ export default function Stock() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {pendingItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
+                  {pendingItems.map((item) => {
+                    const isSelected = selectedPendingItems.includes(item.id)
+                    return (
+                      <tr 
+                        key={item.id} 
+                        className={`hover:bg-gray-50 ${isSelected ? 'bg-primary-50' : ''}`}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <button
+                            onClick={() => handleSelectPendingItem(item.id)}
+                            className="flex items-center"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-5 h-5 text-primary-600" />
+                            ) : (
+                              <Square className="w-5 h-5 text-gray-400 hover:text-gray-600" />
+                            )}
+                          </button>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{item.item_name}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -635,7 +737,8 @@ export default function Stock() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
