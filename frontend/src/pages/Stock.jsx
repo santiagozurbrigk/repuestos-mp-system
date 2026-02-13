@@ -755,16 +755,16 @@ export default function Stock() {
                     {stockItems.map((item) => {
                       const isSelected = selectedItems.includes(item.id)
                       return (
-                        <tr 
-                          key={item.id} 
+                        <tr
+                          key={item.id}
                           ref={(el) => {
                             if (el) {
                               productRowRefs.current[item.id] = el
                             }
                           }}
                           className={`hover:bg-gray-50 transition-all duration-300 ${
-                            highlightedProductId === item.id 
-                              ? 'bg-yellow-100 ring-2 ring-yellow-400 ring-offset-2 shadow-lg' 
+                            highlightedProductId === item.id
+                              ? 'bg-yellow-100 ring-2 ring-yellow-400 ring-offset-2 shadow-lg'
                               : ''
                           } ${isSelected ? 'bg-primary-50' : ''}`}
                         >
@@ -832,7 +832,8 @@ export default function Stock() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
