@@ -542,7 +542,8 @@ export default function Sales() {
                             </div>
                           </div>
                         </div>
-                    <div className="flex items-center space-x-2 ml-4">
+                      </div>
+                      <div className="flex items-center space-x-2 ml-4">
                       <button
                         onClick={() => handleEdit(sale)}
                         className="p-2 text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors duration-150"
