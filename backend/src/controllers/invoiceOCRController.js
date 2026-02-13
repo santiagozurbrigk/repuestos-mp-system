@@ -1156,372 +1156,371 @@ function parseInvoiceText(text) {
         }
         
         if (shouldProcessProduct) {
-            logger.info(`Línea ${i} contiene precio posible de producto: ${priceValue}`)
-            
-            // Buscar hacia atrás (hasta 10 líneas) para encontrar todos los componentes del producto
-            // Aumentado de 8 a 10 para capturar productos con más líneas separadas
-            let cantidad = 1
-            let codigo = null
-            let marca = null
-            let descripcion = null
-            let precioUnitario = null
-            let totalPrice = priceValue
-            
-            // Buscar cantidad (número pequeño 1-2 dígitos)
-            for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
-              const qtyLine = lines[j].trim()
-              if (/^\d{1,2}$/.test(qtyLine)) {
-                const qty = parseInt(qtyLine)
-                if (qty >= 1 && qty <= 100) {
-                  cantidad = qty
-                  logger.info(`Cantidad encontrada en línea ${j}: ${cantidad}`)
-                  break
-                }
-              }
-            }
-            
-            // Buscar precio unitario (número grande cerca del total, generalmente antes)
-            // Buscar en un rango más amplio para encontrar el precio unitario
-            // IMPORTANTE: El precio unitario debe estar ANTES del precio total y ser similar o igual
-            for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
-              const prevLine = lines[j].trim()
-              const prevLineLower = prevLine.toLowerCase().trim()
-              
-              // Excluir encabezados y líneas que no son precios
-              const isPriceHeader = prevLineLower === 'precio unit' ||
-                                   prevLineLower === 'precio unit.' ||
-                                   prevLineLower === 'p. unit' ||
-                                   prevLineLower === 'importe' ||
-                                   prevLineLower === 'desp. imp.' ||
-                                   prevLineLower === 'descripcion' ||
-                                   prevLineLower === 'descripción' ||
-                                   prevLineLower === 'cant' ||
-                                   prevLineLower === 'cant.' ||
-                                   prevLineLower === 'articulo' ||
-                                   prevLineLower === 'artículo'
-              
-              if (isPriceHeader) {
-                continue
-              }
-              
-              const prevNumberMatch = prevLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
-              if (prevNumberMatch) {
-                const prevPrice = parseArgentineNumber(prevNumberMatch[1])
-                // El precio unitario debe ser razonable y similar al total (para cantidad 1, debería ser igual o muy cercano)
-                // Si cantidad > 1, el precio unitario debería ser menor que el total
-                const expectedUnitPrice = cantidad > 1 ? totalPrice / cantidad : totalPrice
-                const priceDiff = Math.abs(prevPrice - expectedUnitPrice)
-                const priceDiffPercent = (priceDiff / expectedUnitPrice) * 100
-                
-                // Aceptar si el precio está dentro del rango razonable y es similar al esperado
-                if (prevPrice >= 100 && 
-                    prevPrice < 500000 &&
-                    (cantidad === 1 ? priceDiffPercent < 10 : prevPrice <= totalPrice * 1.1)) {
-                  precioUnitario = prevPrice
-                  logger.info(`✅ Precio unitario encontrado en línea ${j}: ${prevNumberMatch[1]} -> ${precioUnitario} (esperado: ~${expectedUnitPrice.toFixed(2)})`)
-                  break
-                }
-              }
-            }
-            
-            // Si no encontramos precio unitario, calcularlo del total
-            if (!precioUnitario) {
-              precioUnitario = totalPrice / cantidad
-              logger.info(`Precio unitario calculado: ${totalPrice} / ${cantidad} = ${precioUnitario}`)
-            }
-            
-            // Buscar descripción (texto largo con letras, no solo números)
-            // MEJORADO: Agrupar múltiples líneas consecutivas para formar la descripción completa
-            // El OCR puede separar "BULBO" y "CHEV. CORSA" en líneas diferentes
-            const descriptionParts = []
-            let foundFirstDescription = false
-            
-            for (let j = i - 1; j >= Math.max(i - 10, tableStartIndex); j--) {
-              const prevLine = lines[j].trim()
-              const prevLineLower = prevLine.toLowerCase().trim()
-              
-              // Excluir encabezados de columna comunes (comparación exacta primero)
-              const isHeader = prevLineLower === 'descripcion' || 
-                              prevLineLower === 'descripción' ||
-                              prevLineLower === 'desp. imp.' ||
-                              prevLineLower === 'desp imp' ||
-                              prevLineLower === 'precio unit.' ||
-                              prevLineLower === 'precio unit' ||
-                              prevLineLower === 'p. unit' ||
-                              prevLineLower === 'importe' ||
-                              prevLineLower === 'cant' ||
-                              prevLineLower === 'cant.' ||
-                              prevLineLower === 'articulo' ||
-                              prevLineLower === 'artículo' ||
-                              prevLineLower === 'marca' ||
-                              prevLineLower === 'codigo' ||
-                              prevLineLower === 'código' ||
-                              prevLineLower === 'dto' ||
-                              prevLineLower === 'bonif' ||
-                              prevLineLower === 'total'
-              
-              if (isHeader) {
-                logger.info(`Línea ${j} es encabezado de columna, ignorando: ${prevLine}`)
-                // Si encontramos un encabezado, detener la búsqueda de descripción
-                if (foundFirstDescription) break
-                continue
-              }
-              
-              // Verificar si es un número (precio, cantidad, código numérico) - detener si encontramos números grandes
-              const hasLargeNumber = prevLine.match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/)
-              const isOnlyNumber = /^\d{1,2}$/.test(prevLine) || /^\d{3,}$/.test(prevLine)
-              
-              if (hasLargeNumber || isOnlyNumber) {
-                // Si ya encontramos parte de la descripción, detener aquí
-                if (foundFirstDescription) break
-                continue
-              }
-              
-              // Verificar que sea una descripción válida (texto con letras)
-              if (prevLine.length > 2 && 
-                  prevLine.length < 120 &&
-                  /[A-ZÁÉÍÓÚÑa-záéíóúñ]/.test(prevLine) &&
-                  !prevLine.match(/^\d+$/) &&
-                  !prevLine.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
-                  !prevLine.match(/^\d+%$/) &&
-                  !prevLine.match(/^\$+$/) &&
-                  !prevLineLower.includes('precio') &&
-                  !prevLineLower.includes('importe') &&
-                  !prevLineLower.includes('total') &&
-                  !prevLineLower.includes('subtotal') &&
-                  !prevLineLower.includes('iva') &&
-                  !prevLineLower.includes('flete') &&
-                  !prevLineLower.includes('cliente') &&
-                  !prevLineLower.includes('vendedor')) {
-                
-                // Agregar esta línea a las partes de la descripción
-                descriptionParts.unshift(prevLine) // unshift para mantener el orden
-                foundFirstDescription = true
-                logger.info(`Parte de descripción encontrada en línea ${j}: ${prevLine}`)
-              } else if (foundFirstDescription) {
-                // Si ya encontramos descripción y esta línea no es válida, detener
+          logger.info(`Línea ${i} contiene precio posible de producto: ${priceValue}`)
+          
+          // Buscar hacia atrás (hasta 10 líneas) para encontrar todos los componentes del producto
+          // Aumentado de 8 a 10 para capturar productos con más líneas separadas
+          let cantidad = 1
+          let codigo = null
+          let marca = null
+          let descripcion = null
+          let precioUnitario = null
+          let totalPrice = priceValue
+          
+          // Buscar cantidad (número pequeño 1-2 dígitos)
+          for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
+            const qtyLine = lines[j].trim()
+            if (/^\d{1,2}$/.test(qtyLine)) {
+              const qty = parseInt(qtyLine)
+              if (qty >= 1 && qty <= 100) {
+                cantidad = qty
+                logger.info(`Cantidad encontrada en línea ${j}: ${cantidad}`)
                 break
               }
             }
+          }
+          
+          // Buscar precio unitario (número grande cerca del total, generalmente antes)
+          // Buscar en un rango más amplio para encontrar el precio unitario
+          // IMPORTANTE: El precio unitario debe estar ANTES del precio total y ser similar o igual
+          for (let j = Math.max(i - 10, tableStartIndex); j < i; j++) {
+            const prevLine = lines[j].trim()
+            const prevLineLower = prevLine.toLowerCase().trim()
             
-            // Unir todas las partes de la descripción
-            if (descriptionParts.length > 0) {
-              descripcion = descriptionParts.join(' ').trim()
-              logger.info(`✅ Descripción completa agrupada: "${descripcion}" (de ${descriptionParts.length} partes)`)
+            // Excluir encabezados y líneas que no son precios
+            const isPriceHeader = prevLineLower === 'precio unit' ||
+                                 prevLineLower === 'precio unit.' ||
+                                 prevLineLower === 'p. unit' ||
+                                 prevLineLower === 'importe' ||
+                                 prevLineLower === 'desp. imp.' ||
+                                 prevLineLower === 'descripcion' ||
+                                 prevLineLower === 'descripción' ||
+                                 prevLineLower === 'cant' ||
+                                 prevLineLower === 'cant.' ||
+                                 prevLineLower === 'articulo' ||
+                                 prevLineLower === 'artículo'
+            
+            if (isPriceHeader) {
+              continue
             }
             
-            // Buscar código y marca en líneas anteriores a la descripción completa
-            // PRIORIDAD 1: Buscar código y marca en líneas separadas antes de la descripción
-            if (descripcion && descriptionParts.length > 0) {
-              // Encontrar el índice de la primera línea de la descripción
-              const firstDescLineIndex = i - descriptionParts.length
+            const prevNumberMatch = prevLine.match(/(\d{1,3}(?:\.\d{3})+(?:,\d{2})?)/)
+            if (prevNumberMatch) {
+              const prevPrice = parseArgentineNumber(prevNumberMatch[1])
+              // El precio unitario debe ser razonable y similar al total (para cantidad 1, debería ser igual o muy cercano)
+              // Si cantidad > 1, el precio unitario debería ser menor que el total
+              const expectedUnitPrice = cantidad > 1 ? totalPrice / cantidad : totalPrice
+              const priceDiff = Math.abs(prevPrice - expectedUnitPrice)
+              const priceDiffPercent = (priceDiff / expectedUnitPrice) * 100
               
-              // Buscar código y marca en las líneas anteriores a la descripción (hasta 5 líneas antes)
-              for (let j = Math.max(firstDescLineIndex - 5, tableStartIndex); j < firstDescLineIndex; j++) {
-                const searchLine = lines[j].trim()
-                const searchLineLower = searchLine.toLowerCase().trim()
-                
-                // Excluir encabezados
-                const isHeader = searchLineLower === 'marca' ||
-                                searchLineLower === 'codigo' ||
-                                searchLineLower === 'código' ||
-                                searchLineLower === 'cant' ||
-                                searchLineLower === 'cant.' ||
-                                searchLineLower === 'articulo' ||
-                                searchLineLower === 'artículo' ||
-                                searchLineLower === 'descripcion' ||
-                                searchLineLower === 'descripción' ||
-                                searchLineLower === 'precio unit' ||
-                                searchLineLower === 'precio unit.' ||
-                                searchLineLower === 'p. unit' ||
-                                searchLineLower === 'importe' ||
-                                searchLineLower === 'total'
-                
-                if (isHeader) {
-                  continue
-                }
-                
-                // Buscar marca del repuesto primero (texto corto en mayúsculas, 2-15 caracteres)
-                if (!marca && /^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(searchLine) && searchLine.length < 20) {
-                  const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
-                                         'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
-                                         'VOLVO', 'OPEL', 'SEAT', 'SKODA']
-                  const isVehicleBrand = vehicleBrands.some(vb => searchLine.toUpperCase() === vb)
-                  
-                  if (!isVehicleBrand) {
-                    marca = searchLine
-                    logger.info(`✅ Marca del repuesto encontrada en línea ${j}: ${marca}`)
-                    continue
-                  }
-                }
-                
-                // Buscar código (número de 3+ dígitos o alfanumérico corto)
-                if (!codigo && ((/^\d{3,}$/.test(searchLine) || /^[A-Z0-9\s\-]{3,25}$/.test(searchLine)) &&
-                    searchLine.length < 30 &&
-                    !searchLineLower.includes('marca') &&
-                    !searchLineLower.includes('codigo') &&
-                    !searchLineLower.includes('descripcion') &&
-                    !searchLineLower.includes('precio') &&
-                    !searchLineLower.includes('importe'))) {
-                  codigo = searchLine
-                  logger.info(`✅ Código encontrado en línea ${j}: ${codigo}`)
-                }
+              // Aceptar si el precio está dentro del rango razonable y es similar al esperado
+              if (prevPrice >= 100 && 
+                  prevPrice < 500000 &&
+                  (cantidad === 1 ? priceDiffPercent < 10 : prevPrice <= totalPrice * 1.1)) {
+                precioUnitario = prevPrice
+                logger.info(`✅ Precio unitario encontrado en línea ${j}: ${prevNumberMatch[1]} -> ${precioUnitario} (esperado: ~${expectedUnitPrice.toFixed(2)})`)
+                break
               }
             }
+          }
+          
+          // Si no encontramos precio unitario, calcularlo del total
+          if (!precioUnitario) {
+            precioUnitario = totalPrice / cantidad
+            logger.info(`Precio unitario calculado: ${totalPrice} / ${cantidad} = ${precioUnitario}`)
+          }
+          
+          // Buscar descripción (texto largo con letras, no solo números)
+          // MEJORADO: Agrupar múltiples líneas consecutivas para formar la descripción completa
+          // El OCR puede separar "BULBO" y "CHEV. CORSA" en líneas diferentes
+          const descriptionParts = []
+          let foundFirstDescription = false
+          
+          for (let j = i - 1; j >= Math.max(i - 10, tableStartIndex); j--) {
+            const prevLine = lines[j].trim()
+            const prevLineLower = prevLine.toLowerCase().trim()
             
-            // PRIORIDAD 2: Extraer código de la descripción si contiene números al inicio
-            if (descripcion && !codigo) {
-              const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,25})\s+(.+)$/)
-              if (codeAtStartMatch) {
-                const potentialCode = codeAtStartMatch[1].trim()
-                const remainingDesc = codeAtStartMatch[2].trim()
-                
-                const potentialCodeLower = potentialCode.toLowerCase().trim()
-                const isHeaderCode = potentialCodeLower === 'descripcion' ||
-                                    potentialCodeLower === 'descripción' ||
-                                    potentialCodeLower === 'desp' ||
-                                    potentialCodeLower === 'cant' ||
-                                    potentialCodeLower === 'articulo' ||
-                                    potentialCodeLower === 'marca' ||
-                                    potentialCodeLower === 'codigo'
-                
-                if (!isHeaderCode &&
-                    potentialCode.length >= 3 && 
-                    potentialCode.length <= 25 && 
-                    remainingDesc.length > 5) {
-                  codigo = potentialCode
-                  descripcion = remainingDesc
-                  logger.info(`✅ Código extraído del inicio de descripción: ${codigo}, nueva descripción: ${descripcion}`)
-                }
-              }
+            // Excluir encabezados de columna comunes (comparación exacta primero)
+            const isHeader = prevLineLower === 'descripcion' || 
+                            prevLineLower === 'descripción' ||
+                            prevLineLower === 'desp. imp.' ||
+                            prevLineLower === 'desp imp' ||
+                            prevLineLower === 'precio unit.' ||
+                            prevLineLower === 'precio unit' ||
+                            prevLineLower === 'p. unit' ||
+                            prevLineLower === 'importe' ||
+                            prevLineLower === 'cant' ||
+                            prevLineLower === 'cant.' ||
+                            prevLineLower === 'articulo' ||
+                            prevLineLower === 'artículo' ||
+                            prevLineLower === 'marca' ||
+                            prevLineLower === 'codigo' ||
+                            prevLineLower === 'código' ||
+                            prevLineLower === 'dto' ||
+                            prevLineLower === 'bonif' ||
+                            prevLineLower === 'total'
+            
+            if (isHeader) {
+              logger.info(`Línea ${j} es encabezado de columna, ignorando: ${prevLine}`)
+              // Si encontramos un encabezado, detener la búsqueda de descripción
+              if (foundFirstDescription) break
+              continue
             }
             
-            // PRIORIDAD 3: Buscar marcas de repuestos en la descripción (NO marcas de vehículos)
-            if (descripcion && !marca) {
-              const repuestoBrandPatterns = [
-                /\b(MD|ELIFEL|SADAR|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM|FILTRON|WIX|ACDELCO|MOOG|MONROE|KYB|BILSTEIN)\b/i,
-              ]
-              
-              for (const pattern of repuestoBrandPatterns) {
-                const marcaMatch = descripcion.match(pattern)
-                if (marcaMatch) {
-                  marca = marcaMatch[1].toUpperCase()
-                  logger.info(`✅ Marca del repuesto extraída de descripción: ${marca}`)
-                  break
-                }
-              }
+            // Verificar si es un número (precio, cantidad, código numérico) - detener si encontramos números grandes
+            const hasLargeNumber = prevLine.match(/\d{1,3}(?:\.\d{3})+(?:,\d{2})?/)
+            const isOnlyNumber = /^\d{1,2}$/.test(prevLine) || /^\d{3,}$/.test(prevLine)
+            
+            if (hasLargeNumber || isOnlyNumber) {
+              // Si ya encontramos parte de la descripción, detener aquí
+              if (foundFirstDescription) break
+              continue
             }
             
-            // Buscar cantidad (número pequeño 1-2 dígitos cerca del precio unitario)
-            for (let j = Math.max(i - 5, tableStartIndex); j < i; j++) {
-              const qtyLine = lines[j].trim()
-              if (/^\d{1,2}$/.test(qtyLine)) {
-                const qty = parseInt(qtyLine)
-                if (qty >= 1 && qty <= 100) {
-                  cantidad = qty
-                  logger.info(`Cantidad encontrada en línea ${j}: ${cantidad}`)
-                  break
-                }
-              }
+            // Verificar que sea una descripción válida (texto con letras)
+            if (prevLine.length > 2 && 
+                prevLine.length < 120 &&
+                /[A-ZÁÉÍÓÚÑa-záéíóúñ]/.test(prevLine) &&
+                !prevLine.match(/^\d+$/) &&
+                !prevLine.match(/^\d{1,3}(?:\.\d{3})+(?:,\d{2})?$/) &&
+                !prevLine.match(/^\d+%$/) &&
+                !prevLine.match(/^\$+$/) &&
+                !prevLineLower.includes('precio') &&
+                !prevLineLower.includes('importe') &&
+                !prevLineLower.includes('total') &&
+                !prevLineLower.includes('subtotal') &&
+                !prevLineLower.includes('iva') &&
+                !prevLineLower.includes('flete') &&
+                !prevLineLower.includes('cliente') &&
+                !prevLineLower.includes('vendedor')) {
+              
+              // Agregar esta línea a las partes de la descripción
+              descriptionParts.unshift(prevLine) // unshift para mantener el orden
+              foundFirstDescription = true
+              logger.info(`Parte de descripción encontrada en línea ${j}: ${prevLine}`)
+            } else if (foundFirstDescription) {
+              // Si ya encontramos descripción y esta línea no es válida, detener
+              break
             }
+          }
+          
+          // Unir todas las partes de la descripción
+          if (descriptionParts.length > 0) {
+            descripcion = descriptionParts.join(' ').trim()
+            logger.info(`✅ Descripción completa agrupada: "${descripcion}" (de ${descriptionParts.length} partes)`)
+          }
+          
+          // Buscar código y marca en líneas anteriores a la descripción completa
+          // PRIORIDAD 1: Buscar código y marca en líneas separadas antes de la descripción
+          if (descripcion && descriptionParts.length > 0) {
+            // Encontrar el índice de la primera línea de la descripción
+            const firstDescLineIndex = i - descriptionParts.length
             
-            // Si encontramos datos suficientes, crear el producto
-            // Aceptar si tenemos descripción y precio total válido (ajustado para productos más baratos)
-            if (descripcion && totalPrice >= 100) {
-              // Limpiar la descripción: remover código si está incluido al inicio
-              let cleanDescription = descripcion.trim()
+            // Buscar código y marca en las líneas anteriores a la descripción (hasta 5 líneas antes)
+            for (let j = Math.max(firstDescLineIndex - 5, tableStartIndex); j < firstDescLineIndex; j++) {
+              const searchLine = lines[j].trim()
+              const searchLineLower = searchLine.toLowerCase().trim()
               
-              // Si la descripción empieza con el código, removerlo
-              if (codigo && cleanDescription.startsWith(codigo)) {
-                cleanDescription = cleanDescription.substring(codigo.length).trim()
+              // Excluir encabezados
+              const isHeader = searchLineLower === 'marca' ||
+                              searchLineLower === 'codigo' ||
+                              searchLineLower === 'código' ||
+                              searchLineLower === 'cant' ||
+                              searchLineLower === 'cant.' ||
+                              searchLineLower === 'articulo' ||
+                              searchLineLower === 'artículo' ||
+                              searchLineLower === 'descripcion' ||
+                              searchLineLower === 'descripción' ||
+                              searchLineLower === 'precio unit' ||
+                              searchLineLower === 'precio unit.' ||
+                              searchLineLower === 'p. unit' ||
+                              searchLineLower === 'importe' ||
+                              searchLineLower === 'total'
+              
+              if (isHeader) {
+                continue
               }
               
-              // Remover palabras como "DESCRIPCION" si aparecen al inicio
-              cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
-              
-              // Remover marca del REPUESTO si está al inicio de la descripción (ya la tenemos separada)
-              // NO remover marcas de vehículos, esas son parte del nombre del producto
-              if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
-                // Verificar que no sea una marca de vehículo antes de removerla
+              // Buscar marca del repuesto primero (texto corto en mayúsculas, 2-15 caracteres)
+              if (!marca && /^[A-ZÁÉÍÓÚÑ]{2,15}$/.test(searchLine) && searchLine.length < 20) {
                 const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
                                        'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
                                        'VOLVO', 'OPEL', 'SEAT', 'SKODA']
-                const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
+                const isVehicleBrand = vehicleBrands.some(vb => searchLine.toUpperCase() === vb)
                 
                 if (!isVehicleBrand) {
-                  cleanDescription = cleanDescription.substring(marca.length).trim()
+                  marca = searchLine
+                  logger.info(`✅ Marca del repuesto encontrada en línea ${j}: ${marca}`)
+                  continue
                 }
               }
               
-              // El nombre del producto es la descripción completa (incluye marca del vehículo si está presente)
-              // Solo removemos el código y la marca del repuesto, pero mantenemos todo lo demás
-              const productName = cleanDescription
-              
-              // Verificar que no sea un elemento excluido
-              const productNameLower = productName.toLowerCase()
-              if (productNameLower.includes('flete') ||
-                  productNameLower.includes('forma de pago') ||
-                  productNameLower.includes('metodo de pago') ||
-                  productNameLower.includes('importe en letras') ||
-                  productNameLower.includes('observaciones') ||
-                  productNameLower.includes('bonif') ||
-                  productNameLower === 'dto' ||
-                  productNameLower.includes('subtotal') ||
-                  productNameLower.includes('iva') ||
-                  productNameLower.includes('total') && !productNameLower.includes('importe')) {
-                logger.warn(`❌ Producto excluido: "${productName}"`)
-                i++
-                continue
+              // Buscar código (número de 3+ dígitos o alfanumérico corto)
+              if (!codigo && ((/^\d{3,}$/.test(searchLine) || /^[A-Z0-9\s\-]{3,25}$/.test(searchLine)) &&
+                  searchLine.length < 30 &&
+                  !searchLineLower.includes('marca') &&
+                  !searchLineLower.includes('codigo') &&
+                  !searchLineLower.includes('descripcion') &&
+                  !searchLineLower.includes('precio') &&
+                  !searchLineLower.includes('importe'))) {
+                codigo = searchLine
+                logger.info(`✅ Código encontrado en línea ${j}: ${codigo}`)
               }
+            }
+          }
+          
+          // PRIORIDAD 2: Extraer código de la descripción si contiene números al inicio
+          if (descripcion && !codigo) {
+            const codeAtStartMatch = descripcion.match(/^(\d{3,}|[A-Z0-9]{3,25})\s+(.+)$/)
+            if (codeAtStartMatch) {
+              const potentialCode = codeAtStartMatch[1].trim()
+              const remainingDesc = codeAtStartMatch[2].trim()
               
-              // Crear clave única para el producto
-              const productKey = codigo ? `${productNameLower}_${codigo}` : productNameLower
+              const potentialCodeLower = potentialCode.toLowerCase().trim()
+              const isHeaderCode = potentialCodeLower === 'descripcion' ||
+                                  potentialCodeLower === 'descripción' ||
+                                  potentialCodeLower === 'desp' ||
+                                  potentialCodeLower === 'cant' ||
+                                  potentialCodeLower === 'articulo' ||
+                                  potentialCodeLower === 'marca' ||
+                                  potentialCodeLower === 'codigo'
               
-              // Verificar si ya procesamos este producto
-              if (processedProducts.has(productKey)) {
-                logger.info(`⏭️ Producto ya procesado, ignorando duplicado: "${productName}"`)
-                i++
-                continue
+              if (!isHeaderCode &&
+                  potentialCode.length >= 3 && 
+                  potentialCode.length <= 25 && 
+                  remainingDesc.length > 5) {
+                codigo = potentialCode
+                descripcion = remainingDesc
+                logger.info(`✅ Código extraído del inicio de descripción: ${codigo}, nueva descripción: ${descripcion}`)
               }
+            }
+          }
+          
+          // PRIORIDAD 3: Buscar marcas de repuestos en la descripción (NO marcas de vehículos)
+          if (descripcion && !marca) {
+            const repuestoBrandPatterns = [
+              /\b(MD|ELIFEL|SADAR|BOSCH|VALEO|DELPHI|DENSO|NGK|CHAMPION|MANN|MAHLE|KNECHT|FRAM|FILTRON|WIX|ACDELCO|MOOG|MONROE|KYB|BILSTEIN)\b/i,
+            ]
+            
+            for (const pattern of repuestoBrandPatterns) {
+              const marcaMatch = descripcion.match(pattern)
+              if (marcaMatch) {
+                marca = marcaMatch[1].toUpperCase()
+                logger.info(`✅ Marca del repuesto extraída de descripción: ${marca}`)
+                break
+              }
+            }
+          }
+          
+          // Buscar cantidad (número pequeño 1-2 dígitos cerca del precio unitario)
+          for (let j = Math.max(i - 5, tableStartIndex); j < i; j++) {
+            const qtyLine = lines[j].trim()
+            if (/^\d{1,2}$/.test(qtyLine)) {
+              const qty = parseInt(qtyLine)
+              if (qty >= 1 && qty <= 100) {
+                cantidad = qty
+                logger.info(`Cantidad encontrada en línea ${j}: ${cantidad}`)
+                break
+              }
+            }
+          }
+          
+          // Si encontramos datos suficientes, crear el producto
+          // Aceptar si tenemos descripción y precio total válido (ajustado para productos más baratos)
+          if (descripcion && totalPrice >= 100) {
+            // Limpiar la descripción: remover código si está incluido al inicio
+            let cleanDescription = descripcion.trim()
+            
+            // Si la descripción empieza con el código, removerlo
+            if (codigo && cleanDescription.startsWith(codigo)) {
+              cleanDescription = cleanDescription.substring(codigo.length).trim()
+            }
+            
+            // Remover palabras como "DESCRIPCION" si aparecen al inicio
+            cleanDescription = cleanDescription.replace(/^DESCRIPCION\s+/i, '').trim()
+            
+            // Remover marca del REPUESTO si está al inicio de la descripción (ya la tenemos separada)
+            // NO remover marcas de vehículos, esas son parte del nombre del producto
+            if (marca && cleanDescription.toUpperCase().startsWith(marca)) {
+              // Verificar que no sea una marca de vehículo antes de removerla
+              const vehicleBrands = ['VW', 'FORD', 'CHEV', 'CHEVROLET', 'RENAULT', 'FIAT', 'PEUGEOT', 'CITROEN', 
+                                     'TOYOTA', 'HONDA', 'NISSAN', 'HYUNDAI', 'KIA', 'BMW', 'MERCEDES', 'AUDI', 
+                                     'VOLVO', 'OPEL', 'SEAT', 'SKODA']
+              const isVehicleBrand = vehicleBrands.some(vb => marca.toUpperCase() === vb)
               
-              // Verificar si ya existe un producto con la misma descripción
-              const existingProductIndex = result.items.findIndex(item => 
-                item.item_name.toLowerCase() === productNameLower ||
-                (codigo && item.description && item.description.includes(codigo))
-              )
-              
-              if (existingProductIndex >= 0) {
-                const existingQty = result.items[existingProductIndex].quantity
-                if (cantidad && cantidad !== existingQty) {
-                  result.items[existingProductIndex].quantity = cantidad
-                  logger.info(`🔄 Producto existente actualizado: "${productName}" - Nueva Cant: ${cantidad}`)
-                } else {
-                  logger.info(`⏭️ Producto duplicado ignorado: "${productName}"`)
-                }
-                processedProducts.add(productKey)
+              if (!isVehicleBrand) {
+                cleanDescription = cleanDescription.substring(marca.length).trim()
+              }
+            }
+            
+            // El nombre del producto es la descripción completa (incluye marca del vehículo si está presente)
+            // Solo removemos el código y la marca del repuesto, pero mantenemos todo lo demás
+            const productName = cleanDescription
+            
+            // Verificar que no sea un elemento excluido
+            const productNameLower = productName.toLowerCase()
+            if (productNameLower.includes('flete') ||
+                productNameLower.includes('forma de pago') ||
+                productNameLower.includes('metodo de pago') ||
+                productNameLower.includes('importe en letras') ||
+                productNameLower.includes('observaciones') ||
+                productNameLower.includes('bonif') ||
+                productNameLower === 'dto' ||
+                productNameLower.includes('subtotal') ||
+                productNameLower.includes('iva') ||
+                productNameLower.includes('total') && !productNameLower.includes('importe')) {
+              logger.warn(`❌ Producto excluido: "${productName}"`)
+              i++
+              continue
+            }
+            
+            // Crear clave única para el producto
+            const productKey = codigo ? `${productNameLower}_${codigo}` : productNameLower
+            
+            // Verificar si ya procesamos este producto
+            if (processedProducts.has(productKey)) {
+              logger.info(`⏭️ Producto ya procesado, ignorando duplicado: "${productName}"`)
+              i++
+              continue
+            }
+            
+            // Verificar si ya existe un producto con la misma descripción
+            const existingProductIndex = result.items.findIndex(item => 
+              item.item_name.toLowerCase() === productNameLower ||
+              (codigo && item.description && item.description.includes(codigo))
+            )
+            
+            if (existingProductIndex >= 0) {
+              const existingQty = result.items[existingProductIndex].quantity
+              if (cantidad && cantidad !== existingQty) {
+                result.items[existingProductIndex].quantity = cantidad
+                logger.info(`🔄 Producto existente actualizado: "${productName}" - Nueva Cant: ${cantidad}`)
               } else {
-                // Calcular precio unitario si no se encontró
-                const finalUnitPrice = precioUnitario || (totalPrice / (cantidad || 1))
-                
-                result.items.push({
-                  item_name: productName, // Solo descripción limpia
-                  quantity: cantidad || 1,
-                  unit_price: finalUnitPrice,
-                  total_price: totalPrice,
-                  description: codigo ? `Código: ${codigo}` : null, // Código separado en description
-                  brand: marca || null, // Marca del producto
-                })
-                processedProducts.add(productKey)
-                logger.info(`✅ Producto encontrado: "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}, Marca: ${marca || 'N/A'}`)
-                
-                // NO avanzar múltiples líneas - continuar procesando línea por línea para no perder productos
-                // El processedProducts Set evitará duplicados
+                logger.info(`⏭️ Producto duplicado ignorado: "${productName}"`)
               }
+              processedProducts.add(productKey)
+            } else {
+              // Calcular precio unitario si no se encontró
+              const finalUnitPrice = precioUnitario || (totalPrice / (cantidad || 1))
+              
+              result.items.push({
+                item_name: productName, // Solo descripción limpia
+                quantity: cantidad || 1,
+                unit_price: finalUnitPrice,
+                total_price: totalPrice,
+                description: codigo ? `Código: ${codigo}` : null, // Código separado en description
+                brand: marca || null, // Marca del producto
+              })
+              processedProducts.add(productKey)
+              logger.info(`✅ Producto encontrado: "${productName}" - Cant: ${cantidad || 1}, Precio Unit: ${finalUnitPrice}, Total: ${totalPrice}, Código: ${codigo || 'N/A'}, Marca: ${marca || 'N/A'}`)
+              
+              // NO avanzar múltiples líneas - continuar procesando línea por línea para no perder productos
+              // El processedProducts Set evitará duplicados
+            }
             } else {
               logger.warn(`❌ Producto incompleto - Desc: ${descripcion || 'N/A'}, PrecioUnit: ${precioUnitario || 'N/A'}, Total: ${totalPrice}`)
             }
           }
-        }
         
         i++
       }
@@ -1810,9 +1809,11 @@ function parseInvoiceText(text) {
         }
       }
     }
-  } else {
-    // Usar estrategia de agrupación de líneas también cuando encontramos productTableStart
-    // porque el OCR puede fragmentar las columnas en líneas separadas
+  }
+  
+  // Si encontramos productTableStart, usar estrategia de agrupación de líneas
+  // porque el OCR puede fragmentar las columnas en líneas separadas
+  if (productTableStart !== -1) {
     logger.info(`Usando estrategia de agrupación de líneas desde línea ${productTableStart}`)
     
     const parseArgentineNumber = (numStr) => {
