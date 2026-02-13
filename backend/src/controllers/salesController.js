@@ -61,10 +61,16 @@ export const createSale = async (req, res) => {
       return res.status(500).json({ error: 'Error al crear la venta' })
     }
 
-    // Si hay productos, descontar del stock
+    // Si hay productos, descontar del stock (solo si tienen stock_id)
     if (products && Array.isArray(products) && products.length > 0) {
       for (const product of products) {
         const { stock_id, quantity } = product
+        
+        // Solo descontar si tiene stock_id (productos del stock, no manuales)
+        if (!stock_id) {
+          logger.info(`Producto manual detectado, no se descuenta del stock: ${product.item_name || product.barcode}`)
+          continue
+        }
         
         // Obtener el producto actual
         const { data: stockItem, error: stockError } = await supabase

@@ -288,6 +288,20 @@ export const getStockByBarcode = async (req, res) => {
   }
 }
 
+export const generateBarcodeNumber = async (req, res) => {
+  try {
+    // Generar código de barras único (usando timestamp + random)
+    const timestamp = Date.now()
+    const random = Math.floor(Math.random() * 10000)
+    const barcode = `${timestamp}${random}`.padStart(13, '0').substring(0, 13)
+
+    res.json({ barcode })
+  } catch (error) {
+    logger.error('Error inesperado en generateBarcodeNumber:', error)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+}
+
 export const updateStockQuantity = async (req, res) => {
   try {
     const { id } = req.params
