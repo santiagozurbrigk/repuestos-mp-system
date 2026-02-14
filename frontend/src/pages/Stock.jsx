@@ -342,7 +342,7 @@ export default function Stock() {
     } catch (err) {
       error('Error al buscar el producto')
     }
-  }, [activeTab, showManualProductModal, stockItems, success, error, fetchStock])
+  }, [showManualProductModal, stockItems, success, error, fetchStock])
 
   // Capturar código de barras cuando el modal está abierto
   useEffect(() => {
