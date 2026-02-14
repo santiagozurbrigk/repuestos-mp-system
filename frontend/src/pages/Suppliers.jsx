@@ -1318,6 +1318,22 @@ export default function Suppliers() {
         </div>
       )}
 
+      {/* Calendario de Pagos */}
+      <div className="mt-8">
+        <InvoiceCalendar 
+          onInvoiceClick={(date, invoices) => {
+            // Si hay facturas, mostrar información o filtrar por proveedor
+            if (invoices.length > 0) {
+              // Opcional: filtrar por el primer proveedor o mostrar todas
+              const firstSupplier = invoices[0].suppliers
+              if (firstSupplier) {
+                setSelectedSupplier(firstSupplier)
+              }
+            }
+          }}
+        />
+      </div>
+
       <ConfirmDialog />
     </div>
   )

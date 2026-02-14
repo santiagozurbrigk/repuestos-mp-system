@@ -12,6 +12,7 @@ export default function InvoiceCalendar({ onInvoiceClick }) {
 
   useEffect(() => {
     fetchPendingInvoices()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDate])
 
   const fetchPendingInvoices = async () => {
