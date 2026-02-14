@@ -831,7 +831,6 @@ export default function Stock() {
             )}
           </div>
         </div>
-      )}
 
       <ConfirmDialog />
       
