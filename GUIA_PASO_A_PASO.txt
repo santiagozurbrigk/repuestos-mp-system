@@ -1,0 +1,56 @@
+═══════════════════════════════════════════════════════════════
+  GUÍA PASO A PASO - ELIMINAR COMMIT CON CREDENCIALES
+═══════════════════════════════════════════════════════════════
+
+PASO 1: ✅ COMPLETADO - Estado de git limpiado
+
+PASO 2: Ver commits actuales
+───────────────────────────────────────────────────────────────
+Ejecuta en tu terminal:
+  git log --oneline -5
+
+Deberías ver el commit problemático: 3a3d727
+
+PASO 3: Iniciar rebase interactivo
+───────────────────────────────────────────────────────────────
+Ejecuta:
+  git rebase -i 8dfe402
+
+Se abrirá un editor (Notepad o similar) con algo como:
+
+  pick 3a3d727 feat: Implementar escaneo...
+  pick c26c0ed feat: Implementar escaneo...
+
+EN EL EDITOR:
+  1. Encuentra la línea: pick 3a3d727
+  2. Cámbiala a: drop 3a3d727
+     (o simplemente elimina toda la línea)
+  3. Deja la otra línea como está: pick c26c0ed
+  4. Guarda el archivo (Ctrl+S) y ciérralo
+
+PASO 4: Verificar que funcionó
+───────────────────────────────────────────────────────────────
+Ejecuta:
+  git log --oneline -5
+
+El commit 3a3d727 YA NO debería aparecer.
+
+PASO 5: Hacer push
+───────────────────────────────────────────────────────────────
+Ejecuta:
+  git push origin main --force-with-lease
+
+Si aún aparece error de secret, usa este enlace:
+  https://github.com/santiagozurbrigk/repuestos-mp-system/security/secret-scanning/unblock-secret/39DwoS5oz0rCNu7twvLTrMuqwPG
+
+PASO 6: ⚠️ IMPORTANTE - Rotar credenciales
+───────────────────────────────────────────────────────────────
+Las credenciales estuvieron expuestas. Debes crear nuevas:
+
+1. Ve a: https://console.cloud.google.com/iam-admin/serviceaccounts
+2. Busca: vision-api-service2@repuestos-mp-486422.iam.gserviceaccount.com
+3. Ve a "Claves" → Elimina la clave actual
+4. Crea una nueva clave JSON
+5. Actualiza GOOGLE_CLOUD_KEY_FILE en Render con el nuevo JSON
+
+═══════════════════════════════════════════════════════════════

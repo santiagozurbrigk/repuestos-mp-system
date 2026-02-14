@@ -21,7 +21,7 @@ export default function CashClosure() {
   const [closures, setClosures] = useState([])
   const [loading, setLoading] = useState(true)
   const [closing, setClosing] = useState(false)
-  const [changeAmount, setChangeAmount] = useState('')
+  const [tomorrowChange, setTomorrowChange] = useState('')
 
   useEffect(() => {
     fetchTodaySummary()
@@ -67,9 +67,9 @@ export default function CashClosure() {
       setClosing(true)
       await api.post('/cash-closure', {
         closure_date: todayStr,
-        change: parseFloat(changeAmount || 0),
+        tomorrow_change: parseFloat(tomorrowChange || 0),
       })
-      setChangeAmount('') // Limpiar el input después de cerrar
+      setTomorrowChange('') // Limpiar el input después de cerrar
       await fetchTodaySummary()
       await fetchClosures()
       success('Caja cerrada correctamente')
@@ -144,23 +144,42 @@ export default function CashClosure() {
                 </div>
               </div>
             </div>
-            {/* Input de Cambio */}
+            {/* Input de Cambio del día anterior (no editable) */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Cambio (efectivo del día anterior)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={todaySummary.previous_change || 0}
+                readOnly
+                disabled
+                className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Efectivo que quedó del día anterior. Se suma automáticamente al efectivo del día.
+              </p>
+            </div>
+            
+            {/* Input de Cambio de Mañana */}
             {!todaySummary.isClosed && (
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Cambio (efectivo del día anterior)
+                  Cambio de Mañana
                 </label>
                 <input
                   type="number"
                   step="0.01"
                   min="0"
-                  value={changeAmount}
-                  onChange={(e) => setChangeAmount(e.target.value)}
+                  value={tomorrowChange}
+                  onChange={(e) => setTomorrowChange(e.target.value)}
                   placeholder="0.00"
                   className="w-full md:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Ingresa el efectivo que sobró del día anterior. Se sumará al efectivo del día.
+                  Ingresa el efectivo que quedará en caja para el día siguiente.
                 </p>
               </div>
             )}
@@ -169,11 +188,11 @@ export default function CashClosure() {
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
                 <div className="text-xs font-medium text-blue-700 mb-1">Efectivo</div>
                 <div className="text-xl font-bold text-blue-900">
-                  ${(parseFloat(todaySummary.total_cash || 0) + parseFloat(changeAmount || 0)).toFixed(2)}
+                  ${(parseFloat(todaySummary.total_cash || 0) + parseFloat(todaySummary.previous_change || 0)).toFixed(2)}
                 </div>
-                {changeAmount && parseFloat(changeAmount) > 0 && (
+                {todaySummary.previous_change && parseFloat(todaySummary.previous_change) > 0 && (
                   <div className="text-xs text-blue-600 mt-1">
-                    (+ ${parseFloat(changeAmount).toFixed(2)} cambio)
+                    (+ ${parseFloat(todaySummary.previous_change).toFixed(2)} cambio)
                   </div>
                 )}
               </div>
@@ -240,6 +259,21 @@ export default function CashClosure() {
                 </div>
               </div>
             </div>
+            
+            {/* Cambio de Mañana (solo si no está cerrado) */}
+            {!todaySummary.isClosed && (
+              <div className="mb-6">
+                <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-200">
+                  <div className="text-xs font-medium text-yellow-700 mb-1">Cambio de Mañana</div>
+                  <div className="text-xl font-bold text-yellow-900">
+                    ${parseFloat(tomorrowChange || 0).toFixed(2)}
+                  </div>
+                  <p className="text-xs text-yellow-600 mt-1">
+                    Efectivo que quedará en caja para el día siguiente
+                  </p>
+                </div>
+              </div>
+            )}
             {!todaySummary.isClosed && (
               <div className="mt-6">
                 <button

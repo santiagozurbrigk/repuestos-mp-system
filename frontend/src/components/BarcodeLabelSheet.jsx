@@ -6,21 +6,24 @@ export default function BarcodeLabelSheet({ items, onClose }) {
   const printWindowRef = useRef(null)
 
   useEffect(() => {
-    // Generar códigos de barras para todos los items
+    // Generar códigos de barras para todos los items (incluyendo duplicados por cantidad)
     items.forEach((item, index) => {
-      const refKey = `barcode-${index}`
-      if (barcodeRefs.current[refKey] && item.barcode) {
-        try {
-          JsBarcode(barcodeRefs.current[refKey], item.barcode, {
-            format: 'CODE128',
-            width: 2,
-            height: 60,
-            displayValue: true,
-            fontSize: 14,
-            margin: 5,
-          })
-        } catch (error) {
-          console.error(`Error al generar código de barras para ${item.item_name}:`, error)
+      const quantity = parseInt(item.quantity || 1)
+      for (let qtyIndex = 0; qtyIndex < Math.min(quantity, 4); qtyIndex++) {
+        const refKey = `barcode-preview-${index}-${qtyIndex}`
+        if (barcodeRefs.current[refKey] && item.barcode) {
+          try {
+            JsBarcode(barcodeRefs.current[refKey], item.barcode, {
+              format: 'CODE128',
+              width: 2,
+              height: 60,
+              displayValue: true,
+              fontSize: 14,
+              margin: 5,
+            })
+          } catch (error) {
+            console.error(`Error al generar código de barras para ${item.item_name}:`, error)
+          }
         }
       }
     })
@@ -38,9 +41,22 @@ export default function BarcodeLabelSheet({ items, onClose }) {
     const rowsPerPage = 10
     const labelsPerPage = labelsPerRow * rowsPerPage
     
-    // Generar HTML para todas las etiquetas
-    const labelsHTML = items.map((item, index) => {
-      const refKey = `barcode-print-${index}`
+    // Expandir items según su cantidad: si un producto tiene cantidad 2, crear 2 etiquetas
+    const expandedItems = []
+    let labelIndex = 0
+    items.forEach((item) => {
+      const quantity = parseInt(item.quantity || 1)
+      for (let i = 0; i < quantity; i++) {
+        expandedItems.push({
+          ...item,
+          labelIndex: labelIndex++,
+        })
+      }
+    })
+    
+    // Generar HTML para todas las etiquetas (incluyendo duplicados por cantidad)
+    const labelsHTML = expandedItems.map((item) => {
+      const refKey = `barcode-print-${item.labelIndex}`
       return `
         <div class="label-item">
           <div class="label-header">ETIQUETA DE PRODUCTO</div>
@@ -56,8 +72,8 @@ export default function BarcodeLabelSheet({ items, onClose }) {
     }).join('')
 
     // Generar scripts para cada código de barras
-    const barcodeScripts = items.map((item, index) => {
-      const refKey = `barcode-print-${index}`
+    const barcodeScripts = expandedItems.map((item) => {
+      const refKey = `barcode-print-${item.labelIndex}`
       return `
         (function() {
           const barcodeEl = document.getElementById('${refKey}');
@@ -211,35 +227,44 @@ export default function BarcodeLabelSheet({ items, onClose }) {
         <div className="border-2 border-gray-300 p-4 mb-4 bg-white">
           <div className="grid grid-cols-2 gap-4">
             {items.map((item, index) => {
-              const refKey = `barcode-preview-${index}`
-              return (
-                <div 
-                  key={item.id || index}
-                  className="border-2 border-gray-300 p-3 bg-white overflow-hidden" 
-                  style={{ width: '3.5in', height: '1.125in', minHeight: '108px', maxHeight: '108px' }}
-                >
-                  <div className="text-center text-xs font-bold mb-1">ETIQUETA DE PRODUCTO</div>
-                  <div className="text-center text-xs mb-1 truncate">{item.item_name || ''}</div>
-                  {item.code && <div className="text-center text-xs text-gray-600 mb-0.5">Código: {item.code}</div>}
-                  {item.brand && <div className="text-center text-xs text-gray-600 mb-0.5">Marca: {item.brand}</div>}
-                  <div className="flex justify-center items-center" style={{ height: '40px', overflow: 'hidden' }}>
-                    <svg 
-                      ref={(el) => {
-                        if (el) {
-                          barcodeRefs.current[refKey] = el
-                        }
-                      }} 
-                      style={{ maxWidth: '100%', maxHeight: '40px' }}
-                    ></svg>
+              const quantity = parseInt(item.quantity || 1)
+              return Array.from({ length: Math.min(quantity, 4) }).map((_, qtyIndex) => {
+                const refKey = `barcode-preview-${index}-${qtyIndex}`
+                return (
+                  <div 
+                    key={`${item.id || index}-${qtyIndex}`}
+                    className="border-2 border-gray-300 p-3 bg-white overflow-hidden" 
+                    style={{ width: '3.5in', height: '1.125in', minHeight: '108px', maxHeight: '108px' }}
+                  >
+                    <div className="text-center text-xs font-bold mb-1">ETIQUETA DE PRODUCTO</div>
+                    <div className="text-center text-xs mb-1 truncate">{item.item_name || ''}</div>
+                    {item.code && <div className="text-center text-xs text-gray-600 mb-0.5">Código: {item.code}</div>}
+                    {item.brand && <div className="text-center text-xs text-gray-600 mb-0.5">Marca: {item.brand}</div>}
+                    <div className="flex justify-center items-center" style={{ height: '40px', overflow: 'hidden' }}>
+                      <svg 
+                        ref={(el) => {
+                          if (el) {
+                            barcodeRefs.current[refKey] = el
+                          }
+                        }} 
+                        style={{ maxWidth: '100%', maxHeight: '40px' }}
+                      ></svg>
+                    </div>
+                    <div className="text-center text-xs font-bold mt-0.5">{item.barcode || ''}</div>
                   </div>
-                  <div className="text-center text-xs font-bold mt-0.5">{item.barcode || ''}</div>
-                </div>
-              )
+                )
+              })
             })}
           </div>
           <p className="mt-4 text-sm text-gray-600">
             Las etiquetas se imprimirán en formato A4 con 2 columnas por 10 filas (20 etiquetas por hoja).
-            {items.length > 20 && ` Se generarán ${Math.ceil(items.length / 20)} hoja(s).`}
+            {(() => {
+              const totalLabels = items.reduce((sum, item) => sum + parseInt(item.quantity || 1), 0)
+              return totalLabels > 20 ? ` Se generarán ${Math.ceil(totalLabels / 20)} hoja(s).` : ''
+            })()}
+          </p>
+          <p className="mt-2 text-xs text-gray-500">
+            Total de etiquetas a imprimir: {items.reduce((sum, item) => sum + parseInt(item.quantity || 1), 0)}
           </p>
         </div>
 
@@ -249,7 +274,7 @@ export default function BarcodeLabelSheet({ items, onClose }) {
             onClick={handlePrint}
             className="flex-1 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 font-medium"
           >
-            Imprimir {items.length} Etiqueta(s)
+            Imprimir {items.reduce((sum, item) => sum + parseInt(item.quantity || 1), 0)} Etiqueta(s)
           </button>
           <button
             onClick={onClose}

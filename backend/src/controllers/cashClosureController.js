@@ -64,14 +64,14 @@ export const getTodaySalesSummary = async (req, res) => {
       return saleDateLocal === todayStr && !closedDates.includes(saleDateLocal)
     })
 
-    // Obtener el cierre del día anterior para calcular el balance inicial
+    // Obtener el cierre del día anterior para calcular el balance inicial y el cambio
     const yesterday = new Date(todayStr)
     yesterday.setDate(yesterday.getDate() - 1)
     const yesterdayStr = yesterday.toISOString().split('T')[0]
     
     const { data: previousClosure } = await supabase
       .from('cash_closures')
-      .select('final_balance')
+      .select('final_balance, tomorrow_change')
       .eq('closure_date', yesterdayStr)
       .maybeSingle()
 
@@ -80,6 +80,9 @@ export const getTodaySalesSummary = async (req, res) => {
     if (previousClosure) {
       initialBalance = parseFloat(previousClosure.final_balance || 0)
     }
+    
+    // Obtener el cambio del día anterior (tomorrow_change del día anterior)
+    const previousChange = previousClosure ? parseFloat(previousClosure.tomorrow_change || 0) : 0
 
     // Calcular totales solo de ventas que no están en cierres anteriores
     let totalSales = 0
@@ -120,6 +123,11 @@ export const getTodaySalesSummary = async (req, res) => {
       }
     })
 
+    // Sumar el cambio del día anterior al efectivo (tomorrow_change del día anterior)
+    if (previousChange > 0) {
+      totalCash += previousChange
+    }
+
     // Calcular comisiones de empleados (solo sobre ventas, no egresos)
     const fernandoCommission = totalSales * 0.10
     const pedroCommission = totalSales * 0.15
@@ -142,6 +150,7 @@ export const getTodaySalesSummary = async (req, res) => {
       pedro_commission: pedroCommission,
       final_balance: finalBalance,
       isClosed: false,
+      previous_change: previousChange, // Cambio del día anterior (tomorrow_change del día anterior)
     }
 
     res.json(summary)
@@ -154,7 +163,7 @@ export const getTodaySalesSummary = async (req, res) => {
 export const createCashClosure = async (req, res) => {
   try {
     const userId = req.user.id
-    const { closure_date, change } = req.body
+    const { closure_date, tomorrow_change } = req.body
 
     // Usar fecha local para evitar problemas de zona horaria
     const dateStr = closure_date ? closure_date : getLocalDateString()
@@ -212,14 +221,14 @@ export const createCashClosure = async (req, res) => {
       return saleDateLocal === dateStr
     })
 
-    // Obtener el cierre del día anterior para calcular el balance inicial
+    // Obtener el cierre del día anterior para calcular el balance inicial y el cambio
     const dateObj = new Date(dateStr)
     dateObj.setDate(dateObj.getDate() - 1)
     const previousDateStr = dateObj.toISOString().split('T')[0]
     
     const { data: previousClosure } = await supabase
       .from('cash_closures')
-      .select('final_balance')
+      .select('final_balance, tomorrow_change')
       .eq('closure_date', previousDateStr)
       .maybeSingle()
 
@@ -228,6 +237,9 @@ export const createCashClosure = async (req, res) => {
     if (previousClosure) {
       initialBalance = parseFloat(previousClosure.final_balance || 0)
     }
+    
+    // Obtener el cambio del día anterior (tomorrow_change del día anterior)
+    const previousChange = previousClosure ? parseFloat(previousClosure.tomorrow_change || 0) : 0
 
     // Calcular totales
     let totalSales = 0
@@ -268,10 +280,10 @@ export const createCashClosure = async (req, res) => {
       }
     })
 
-    // Sumar el cambio al efectivo (efectivo del día anterior)
-    const changeAmount = parseFloat(change || 0)
-    if (changeAmount > 0) {
-      totalCash += changeAmount
+    // Sumar el cambio del día anterior al efectivo (tomorrow_change del día anterior)
+    // El cambio viene del día anterior, no se ingresa manualmente
+    if (previousChange > 0) {
+      totalCash += previousChange
     }
 
     // Calcular comisiones de empleados (solo sobre ventas, no egresos)
@@ -296,7 +308,8 @@ export const createCashClosure = async (req, res) => {
       fernando_commission: fernandoCommission,
       pedro_commission: pedroCommission,
       final_balance: finalBalance,
-      change: changeAmount,
+      change: previousChange, // Cambio del día anterior (tomorrow_change del día anterior)
+      tomorrow_change: parseFloat(tomorrow_change || 0), // Efectivo que queda para el día siguiente
     }
 
     const { data, error } = await supabase
