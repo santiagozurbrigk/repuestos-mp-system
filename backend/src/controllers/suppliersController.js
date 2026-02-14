@@ -706,3 +706,38 @@ export const getSupplierSummary = async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' })
   }
 }
+
+// Obtener facturas pendientes de pago agrupadas por fecha de vencimiento
+export const getPendingInvoices = async (req, res) => {
+  try {
+    const { start_date, end_date } = req.query
+    const userId = req.user.id
+
+    let query = supabase
+      .from('supplier_invoices')
+      .select('*, suppliers(*)')
+      .eq('is_paid', false)
+      .not('due_date', 'is', null)
+      .order('due_date', { ascending: true })
+
+    if (start_date) {
+      query = query.gte('due_date', start_date)
+    }
+
+    if (end_date) {
+      query = query.lte('due_date', end_date)
+    }
+
+    const { data, error } = await query
+
+    if (error) {
+      logger.error('Error al obtener facturas pendientes:', error)
+      return res.status(500).json({ error: 'Error al obtener las facturas pendientes' })
+    }
+
+    res.json(data || [])
+  } catch (error) {
+    logger.error('Error inesperado en getPendingInvoices:', error)
+    res.status(500).json({ error: 'Error interno del servidor' })
+  }
+}

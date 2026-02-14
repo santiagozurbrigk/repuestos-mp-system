@@ -419,7 +419,7 @@ export const processInvoiceImage = async (req, res) => {
       }
     }
 
-    // Preparar respuesta
+    // Preparar respuesta - SOLO datos fiscales, NO productos
     const extractedData = {
       supplier_id: supplierId,
       supplier_name: parsedData.vendorName || null,
@@ -427,11 +427,11 @@ export const processInvoiceImage = async (req, res) => {
       invoice_date: parsedData.invoiceDate || getBuenosAiresDateString(),
       due_date: parsedData.dueDate || null,
       amount: parsedData.totalAmount || 0,
-      items: parsedData.items || [],
+      items: [], // Ya no se extraen productos - las facturas solo son para pagos
       raw_text: extractedText.substring(0, 500), // Primeros 500 caracteres para debugging
     }
 
-    logger.info(`Factura procesada exitosamente. Items encontrados: ${parsedData.items.length}`)
+    logger.info(`Factura procesada exitosamente. Solo datos fiscales extraídos (sin productos).`)
 
     res.json({
       success: true,

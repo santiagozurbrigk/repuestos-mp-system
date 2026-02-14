@@ -26,6 +26,7 @@ import {
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { getBuenosAiresDateString } from '../utils/dateHelpers'
+import InvoiceCalendar from '../components/InvoiceCalendar'
 
 const paymentMethodLabels = {
   cash: 'Efectivo',
@@ -49,7 +50,6 @@ export default function Suppliers() {
   const [showInvoiceImageModal, setShowInvoiceImageModal] = useState(false)
   const [processingImage, setProcessingImage] = useState(false)
   const [extractedData, setExtractedData] = useState(null)
-  const [invoiceItems, setInvoiceItems] = useState([])
   const [selectedImage, setSelectedImage] = useState(null)
   const [cameraActive, setCameraActive] = useState(false)
   const [stream, setStream] = useState(null)
@@ -195,8 +195,7 @@ export default function Suppliers() {
           observations: '',
         })
 
-        // Guardar items extraídos
-        setInvoiceItems(data.items || [])
+        // Ya no se guardan items extraídos (las facturas solo son para pagos)
         setExtractedData(data)
 
         // Cerrar modal de imagen y abrir modal de factura
@@ -232,38 +231,6 @@ export default function Suppliers() {
     }
   }
 
-  const handleAddInvoiceItem = () => {
-    setInvoiceItems([
-      ...invoiceItems,
-      {
-        item_name: '',
-        quantity: 1,
-        code: null,
-        brand: null,
-        description: null,
-        unit_price: 0,
-        total_price: 0,
-        description: '',
-      },
-    ])
-  }
-
-  const handleUpdateInvoiceItem = (index, field, value) => {
-    const updatedItems = [...invoiceItems]
-    updatedItems[index] = {
-      ...updatedItems[index],
-      [field]: value,
-    }
-
-    // Ya no recalculamos total_price automáticamente
-    // El usuario ingresa directamente el total_price
-
-    setInvoiceItems(updatedItems)
-  }
-
-  const handleRemoveInvoiceItem = (index) => {
-    setInvoiceItems(invoiceItems.filter((_, i) => i !== index))
-  }
 
   const fetchSuppliers = async () => {
     try {
@@ -382,57 +349,7 @@ export default function Suppliers() {
         success('Factura creada correctamente')
       }
 
-      // Guardar items de la factura si hay alguno
-      if (invoiceItems.length > 0 && invoiceId) {
-        try {
-          // Primero eliminar items existentes si estamos editando
-          if (editingInvoice) {
-            // Obtener items existentes y eliminarlos
-            const existingItems = await api.get(`/invoice-items/invoice/${invoiceId}`)
-            for (const item of existingItems.data) {
-              await api.delete(`/invoice-items/${item.id}`)
-            }
-          }
-
-          // Crear nuevos items
-          const itemsToSave = invoiceItems
-            .filter((item) => item.item_name && item.item_name.trim() !== '')
-            .map((item) => {
-              // Preservar los valores del OCR si existen, de lo contrario usar valores por defecto
-              const quantity = item.quantity ? parseFloat(item.quantity) : 1
-              const unitPrice = item.unit_price !== undefined && item.unit_price !== null 
-                ? parseFloat(item.unit_price) 
-                : undefined
-              const totalPrice = item.total_price !== undefined && item.total_price !== null 
-                ? parseFloat(item.total_price) 
-                : undefined
-              
-              // Extraer código del campo description si viene como "Código: 24703"
-              const codeMatch = item.description?.match(/Código:\s*(.+)/i)
-              const code = codeMatch ? codeMatch[1].trim() : (item.code || null)
-              
-              return {
-                item_name: item.item_name,
-                quantity: isNaN(quantity) ? 1 : quantity,
-                unit_price: unitPrice !== undefined && !isNaN(unitPrice) ? unitPrice : undefined,
-                total_price: totalPrice !== undefined && !isNaN(totalPrice) ? totalPrice : undefined,
-                description: code ? `Código: ${code}` : null,
-                brand: item.brand || null, // Marca del repuesto (NO del vehículo)
-                code: code || null, // Código del producto
-              }
-            })
-
-          if (itemsToSave.length > 0) {
-            await api.post('/invoice-items/bulk', {
-              invoice_id: invoiceId,
-              items: itemsToSave,
-            })
-          }
-        } catch (err) {
-          console.warn('Error al guardar items de factura:', err)
-          // No mostrar error al usuario, la factura ya se guardó
-        }
-      }
+      // Ya no se guardan items de factura - las facturas solo son para pagos
       setShowInvoiceModal(false)
       setEditingInvoice(null)
       setInvoiceFormData({
@@ -447,7 +364,6 @@ export default function Suppliers() {
         payment_method: 'cash',
         observations: '',
       })
-      setInvoiceItems([])
       setExtractedData(null)
       await fetchSuppliers()
       if (selectedSupplier) {
@@ -487,13 +403,7 @@ export default function Suppliers() {
       observations: invoice.observations || '',
     })
 
-    // Cargar items de la factura
-    try {
-      const itemsResponse = await api.get(`/invoice-items/invoice/${invoice.id}`)
-      setInvoiceItems(itemsResponse.data || [])
-    } catch (err) {
-      setInvoiceItems([])
-    }
+    // Ya no se cargan items de factura
 
     setShowInvoiceModal(true)
   }
@@ -647,7 +557,7 @@ export default function Suppliers() {
                 )}
               </button>
               <p className="mt-2 text-xs text-gray-500">
-                Extrae automáticamente proveedor, datos y productos de la factura
+                Extrae automáticamente proveedor y datos fiscales de la factura
               </p>
             </div>
           </div>
@@ -1194,110 +1104,6 @@ export default function Suppliers() {
                     </div>
                   </>
                 )}
-                {/* Sección de Productos/Items */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700">Productos de la Factura</label>
-                    <button
-                      type="button"
-                      onClick={handleAddInvoiceItem}
-                      className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center space-x-1"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Agregar Producto</span>
-                    </button>
-                  </div>
-                  {invoiceItems.length === 0 ? (
-                    <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
-                      <FileText className="mx-auto h-8 w-8 text-gray-400" />
-                      <p className="mt-2 text-sm text-gray-500">No hay productos agregados</p>
-                      <p className="text-xs text-gray-400 mt-1">Haz clic en "Agregar Producto" para comenzar</p>
-                    </div>
-                  ) : (
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Producto</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-32">Código</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-28">Marca Repuesto</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-24">Cantidad</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase w-16"></th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white divide-y divide-gray-200">
-                            {invoiceItems.map((item, index) => {
-                              // Extraer código del campo description si viene como "Código: 24703"
-                              const codeMatch = item.description?.match(/Código:\s*(.+)/i)
-                              const extractedCode = codeMatch ? codeMatch[1].trim() : (item.code || item.description || '')
-                              
-                              return (
-                                <tr key={index}>
-                                  <td className="px-3 py-2">
-                                    <input
-                                      type="text"
-                                      value={item.item_name || ''}
-                                      onChange={(e) => handleUpdateInvoiceItem(index, 'item_name', e.target.value)}
-                                      placeholder="Nombre del producto"
-                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <input
-                                      type="text"
-                                      value={extractedCode}
-                                      onChange={(e) => {
-                                        // Actualizar el código en el campo description
-                                        const updatedItems = [...invoiceItems]
-                                        updatedItems[index] = {
-                                          ...updatedItems[index],
-                                          description: e.target.value ? `Código: ${e.target.value}` : null,
-                                          code: e.target.value || null
-                                        }
-                                        setInvoiceItems(updatedItems)
-                                      }}
-                                      placeholder="Código"
-                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <input
-                                      type="text"
-                                      value={item.brand || ''}
-                                      onChange={(e) => handleUpdateInvoiceItem(index, 'brand', e.target.value)}
-                                      placeholder="Marca repuesto"
-                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <input
-                                      type="number"
-                                      step="1"
-                                      min="1"
-                                      value={item.quantity || 1}
-                                      onChange={(e) => handleUpdateInvoiceItem(index, 'quantity', parseInt(e.target.value) || 1)}
-                                      className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-primary-500 focus:border-transparent"
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleRemoveInvoiceItem(index)}
-                                      className="text-red-600 hover:text-red-700 p-1"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones</label>

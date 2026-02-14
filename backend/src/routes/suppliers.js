@@ -12,6 +12,7 @@ import {
   updateInvoice,
   deleteInvoice,
   getSupplierSummary,
+  getPendingInvoices,
   processBarcode,
 } from '../controllers/suppliersController.js'
 import { processInvoiceImage } from '../controllers/invoiceOCRController.js'
@@ -43,6 +44,7 @@ router.post('/process-invoice-image', upload.single('image'), processInvoiceImag
 // Rutas de facturas (DEBEN IR ANTES de las rutas con parámetros dinámicos)
 router.post('/invoices', createInvoice)
 router.get('/invoices', getInvoices)
+router.get('/invoices/pending', getPendingInvoices)
 router.get('/invoices/:invoice_id', getInvoiceById)
 router.put('/invoices/:invoice_id', updateInvoice)
 router.delete('/invoices/:invoice_id', deleteInvoice)
