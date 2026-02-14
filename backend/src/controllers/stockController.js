@@ -269,7 +269,6 @@ export const getStockByBarcode = async (req, res) => {
       .from('stock')
       .select('*')
       .eq('barcode', barcode)
-      .gt('quantity', 0) // Solo productos con stock disponible
       .single()
 
     if (error) {
@@ -305,14 +304,24 @@ export const createStockItem = async (req, res) => {
       .maybeSingle()
 
     if (existingProduct) {
-      // Si existe, actualizar la cantidad
+      // Si existe, actualizar la cantidad y opcionalmente brand/code si se proporcionan
       const newQuantity = (existingProduct.quantity || 0) + (parseInt(quantity) || 1)
+      const updateData = { 
+        quantity: newQuantity,
+        updated_at: new Date().toISOString()
+      }
+      
+      // Actualizar brand y code si se proporcionan y no están vacíos
+      if (brand && brand.trim() !== '') {
+        updateData.brand = brand.trim()
+      }
+      if (code && code.trim() !== '') {
+        updateData.code = code.trim()
+      }
+      
       const { data: updatedStock, error: updateError } = await supabase
         .from('stock')
-        .update({ 
-          quantity: newQuantity,
-          updated_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', existingProduct.id)
         .select()
         .single()
